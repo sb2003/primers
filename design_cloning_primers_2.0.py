@@ -63,7 +63,7 @@ class PrimerDesignResult:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Design cloning primers for genes.")
     p.add_argument("--plasmid", required=True)
-    p.add_argument("--genome", required=True)
+    p.add_argument("--genome", required=True, nargs="+", help="One or more genome FASTA files; each may itself be multi-record")
     p.add_argument("--genes", required=True)
     p.add_argument("--output", required=True)
 
@@ -133,6 +133,21 @@ def load_multi_fasta(path: str) -> List[Tuple[str, str]]:
         out.append((record.id, sanitize_dna(str(record.seq))))
     if not out:
         raise ValueError(f"No FASTA records found in {path}")
+    return out
+
+
+def load_genome_records(paths: Sequence[str]) -> List[Tuple[str, str]]:
+    out: List[Tuple[str, str]] = []
+    seen_ids = set()
+    for path in paths:
+        for rec_id, seq in load_multi_fasta(path):
+            final_id = rec_id
+            if final_id in seen_ids:
+                final_id = f"{Path(path).stem}:{rec_id}"
+            seen_ids.add(final_id)
+            out.append((final_id, seq))
+    if not out:
+        raise ValueError("No genome FASTA records were loaded")
     return out
 
 
@@ -334,10 +349,10 @@ def design_with_primer3(gene_seq: str, left_tail: str, right_tail: str, args: ar
     return PrimerDesignResult(
         forward_binding=fbind,
         reverse_binding=rbind,
-        forward_tail=left_tail,
-        reverse_tail=right_tail,
-        forward_full=left_tail + fbind,
-        reverse_full=right_tail + rbind,
+        forward_tail=left_tail.lower(),
+        reverse_tail=right_tail.lower(),
+        forward_full=left_tail.lower() + fbind.upper(),
+        reverse_full=right_tail.lower() + rbind.upper(),
         forward_tm=ftm,
         reverse_tm=rtm,
         product_size=psize,
@@ -362,10 +377,10 @@ def manual_fallback(gene_seq: str, left_tail: str, right_tail: str, args: argpar
                 best = PrimerDesignResult(
                     forward_binding=fbind,
                     reverse_binding=rbind,
-                    forward_tail=left_tail,
-                    reverse_tail=right_tail,
-                    forward_full=left_tail + fbind,
-                    reverse_full=right_tail + rbind,
+                    forward_tail=left_tail.lower(),
+                    reverse_tail=right_tail.lower(),
+                    forward_full=left_tail.lower() + fbind.upper(),
+                    reverse_full=right_tail.lower() + rbind.upper(),
                     forward_tm=ftm,
                     reverse_tm=rtm,
                     product_size=len(gene_seq),
@@ -380,7 +395,7 @@ def manual_fallback(gene_seq: str, left_tail: str, right_tail: str, args: argpar
 def main() -> int:
     args = parse_args()
     plasmid_id, plasmid_seq = load_single_sequence(args.plasmid)
-    genome_records = load_multi_fasta(args.genome)
+    genome_records = load_genome_records(args.genome)
     genes = load_multi_fasta(args.genes)
 
     left_enzyme = get_enzyme(args.left_enzyme)
@@ -485,7 +500,11 @@ def main() -> int:
                 if args.progress_every > 0 and i % args.progress_every == 0:
                     print(f"Processed {i}/{len(genes)} genes | written={written} skipped={skipped} failed={failed}", file=sys.stderr)
 
-    print(f"Done. Processed {len(genes)} genes | written={written} skipped={skipped} failed={failed}", file=sys.stderr)
+    print(
+        f"Done. Processed {len(genes)} genes across {len(genome_records)} genome record(s) from {len(args.genome)} file(s) | "
+        f"written={written} skipped={skipped} failed={failed}",
+        file=sys.stderr,
+    )
     return 0
 
 
