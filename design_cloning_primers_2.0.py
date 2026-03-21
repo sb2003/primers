@@ -18,7 +18,6 @@ For plasmid_overlaps mode with a circular vector:
   the correct default primer assignment is:
     * forward primer tail = reverse-complement of sequence downstream of the cut
     * reverse primer tail = sequence upstream of the cut
-This matches the pMMB BamHI example provided by the user.
 """
 
 from __future__ import annotations
@@ -268,11 +267,6 @@ def build_tails(plasmid_seq: str, left_enzyme, right_enzyme, args: argparse.Name
         left_raw, left_wrapped = extract_upstream(plasmid_seq, left0, args.overlap_length, circular=False)
         right_raw, right_wrapped = extract_downstream(plasmid_seq, right0, args.overlap_length, circular=False)
 
-    if left_wrapped:
-        warnings.append("left_overlap_wrapped_around_circular_origin")
-    if right_wrapped:
-        warnings.append("right_overlap_wrapped_around_circular_origin")
-
     # Distinct-cut case: forward gets left flank as written; reverse gets right flank reverse-complemented.
     left_tail = left_raw + sanitize_dna(args.left_extra)
     right_tail = rc(right_raw) + sanitize_dna(args.right_extra)
@@ -446,7 +440,7 @@ def main() -> int:
 
         for i, (gene_id, gene_seq) in enumerate(genes, start=1):
             try:
-                warnings = list(tail_warnings)
+                warnings = []
                 matches = find_exact_matches(genome_records, gene_seq)
                 contig_id, start_1based, end_1based, match_status = summarize_matches(matches)
                 if match_status == "not_found" and not args.allow_unmatched_genes:
