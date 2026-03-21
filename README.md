@@ -7,7 +7,6 @@ Program:
 What it does:
 - Reads a plasmid FASTA, genome FASTA(s), and a FASTA of gene sequences.
 - Designs primers that amplify each gene in its entirety.
-- Adds 5' restriction-site tails to the primers.
 - Writes a CSV with forward/reverse primers and Tm values.
 - Warns if the chosen enzymes cut the insert or are not unique in the plasmid.
 
