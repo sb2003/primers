@@ -1,5 +1,5 @@
-Design cloning primers with restriction sites
-===========================================
+Design cloning primers 
+=======================
 
 Program:
 - design_cloning_primers_2.0.py
