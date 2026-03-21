@@ -16,14 +16,13 @@ Dependencies:
 - primer3-py
 
 Install:
-   
-    ```
-    pip install biopython primer3-py
-    ```
-   
-    ```
+
+```  
+pip install biopython primer3-py
+```
+
     git clone https://github.com/sb2003/primers.git
-    ```
+
 Example:
 
     python design_cloning_primers_2.0.py \
