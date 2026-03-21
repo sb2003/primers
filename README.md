@@ -15,12 +15,11 @@ Dependencies:
 - biopython
 - primer3-py
 
-Install:
+Install dependencies:
 
-```  
-pip install biopython primer3-py
-```
+    pip install biopython primer3-py
 
+Clone directory:
     git clone https://github.com/sb2003/primers.git
 
 Example:
