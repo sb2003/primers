@@ -23,7 +23,7 @@ Clone directory:
 
     git clone https://github.com/sb2003/primers.git
 
-Example:
+Example call:
 
     python design_cloning_primers_2.0.py \
       --plasmid vector.fasta \
