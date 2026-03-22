@@ -22,6 +22,11 @@ Clone directory:
 
     git clone https://github.com/sb2003/primers.git
 
+Create the conda env:
+    
+    conda env create -f environment.yml
+    conda activate primers
+
 Example call:
 
     python design_cloning_primers_2.0.py \
