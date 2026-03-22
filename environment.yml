@@ -4,9 +4,6 @@ channels:
   - bioconda
 dependencies:
   - python=3.10
-  - emboss=6.6.0
   - pip
   - pip:
-      - streamlit==1.39.0
       - biopython==1.83
-      - ollama
