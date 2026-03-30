@@ -18,6 +18,7 @@ For plasmid_overlaps mode with a circular vector:
   the correct default primer assignment is:
     * forward primer tail = reverse-complement of sequence downstream of the cut
     * reverse primer tail = sequence upstream of the cut
+This matches the pMMB BamHI example provided by the user.
 """
 
 from __future__ import annotations
@@ -100,11 +101,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-tm", type=float, default=63.0)
     p.add_argument("--min-gc", type=float, default=35.0)
     p.add_argument("--max-gc", type=float, default=65.0)
+    p.add_argument("--mv-conc", type=float, default=500.0,
+                   help="Monovalent cation concentration (mM) for Tm calculation (default: 500)")
 
     p.add_argument("--circular-plasmid", action="store_true", default=True)
     p.add_argument("--linear-plasmid", action="store_false", dest="circular_plasmid")
     p.add_argument("--allow-unmatched-genes", action="store_true")
     p.add_argument("--progress-every", type=int, default=100)
+    p.add_argument("--gc-clamp", type=int, default=1,
+                   help="Minimum number of G/C bases at the 3' end of each primer (default: 1)")
     return p.parse_args()
 
 
@@ -330,12 +335,17 @@ def design_with_primer3(gene_seq: str, left_tail: str, right_tail: str, args: ar
         "PRIMER_MAX_GC": args.max_gc,
         "PRIMER_MAX_NS_ACCEPTED": 0,
         "PRIMER_MAX_POLY_X": 4,
+        "PRIMER_GC_CLAMP": args.gc_clamp,
+        "PRIMER_SALT_MONOVALENT": args.mv_conc,
     }
     result = primer3.bindings.design_primers(seq_args, global_args)
     if result.get("PRIMER_PAIR_NUM_RETURNED", 0) < 1:
         return None
     fbind = result["PRIMER_LEFT_0_SEQUENCE"]
     rbind = result["PRIMER_RIGHT_0_SEQUENCE"]
+    if args.gc_clamp > 0 and (fbind[-1] not in "GC" or rbind[-1] not in "GC"):
+        return None
+
     ftm = float(result["PRIMER_LEFT_0_TM"])
     rtm = float(result["PRIMER_RIGHT_0_TM"])
     psize = int(result["PRIMER_PAIR_0_PRODUCT_SIZE"])
@@ -359,13 +369,19 @@ def manual_fallback(gene_seq: str, left_tail: str, right_tail: str, args: argpar
     primer3 = import_primer3()
     best = None
     best_score = None
-    for flen in range(args.min_primer_size, min(args.max_primer_size, len(gene_seq)) + 1):
+    gc_clamp_extension = 10 if args.gc_clamp > 0 else 0
+    for flen in range(args.min_primer_size, min(args.max_primer_size + gc_clamp_extension, len(gene_seq)) + 1):
         fbind = gene_seq[:flen]
-        ftm = float(primer3.calc_tm(fbind))
-        for rlen in range(args.min_primer_size, min(args.max_primer_size, len(gene_seq)) + 1):
+        if args.gc_clamp > 0 and fbind[-1] not in "GC":
+            continue
+        ftm = float(primer3.calc_tm(fbind, mv_conc=args.mv_conc, dv_conc=0, dntp_conc=0))
+        for rlen in range(args.min_primer_size, min(args.max_primer_size + gc_clamp_extension, len(gene_seq)) + 1):
             rbind = rc(gene_seq[-rlen:])
-            rtm = float(primer3.calc_tm(rbind))
-            score = abs(ftm - args.opt_tm) + abs(rtm - args.opt_tm) + 2 * abs(ftm - rtm)
+            if args.gc_clamp > 0 and rbind[-1] not in "GC":
+                continue
+            rtm = float(primer3.calc_tm(rbind, mv_conc=args.mv_conc, dv_conc=0, dntp_conc=0))
+            oversize_penalty = (max(0, flen - args.max_primer_size) + max(0, rlen - args.max_primer_size)) * 10
+            score = abs(ftm - args.opt_tm) + abs(rtm - args.opt_tm) + 2 * abs(ftm - rtm) + oversize_penalty
             if best_score is None or score < best_score:
                 best_score = score
                 best = PrimerDesignResult(
@@ -381,6 +397,10 @@ def manual_fallback(gene_seq: str, left_tail: str, right_tail: str, args: argpar
                     pair_penalty=None,
                     method="manual_end_scan_fallback",
                 )
+    if best is None and args.gc_clamp > 0:
+        # No GC-clamped primer found even in extended range; retry without clamp
+        return manual_fallback(gene_seq, left_tail, right_tail,
+                               argparse.Namespace(**{**vars(args), "gc_clamp": 0}))
     if best is None:
         raise ValueError("could not construct fallback primer pair")
     return best
@@ -418,6 +438,7 @@ def main() -> int:
             "right_enzyme",
             "forward_primer_full_5to3",
             "reverse_primer_full_5to3",
+            "avg_tm_c",
             "forward_tm_c",
             "reverse_tm_c",
             "pair_penalty",
@@ -467,6 +488,7 @@ def main() -> int:
                     args.right_enzyme,
                     design.forward_full,
                     design.reverse_full,
+                    round((design.forward_tm + design.reverse_tm) / 2, 2),
                     round(design.forward_tm, 2),
                     round(design.reverse_tm, 2),
                     "" if design.pair_penalty is None else round(design.pair_penalty, 3),
