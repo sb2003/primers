@@ -1,0 +1,6 @@
+.DS_Store
+.claude/
+*.dna
+*.gbk
+*.csv
+test_genes.fasta
