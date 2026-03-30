@@ -18,7 +18,6 @@ For plasmid_overlaps mode with a circular vector:
   the correct default primer assignment is:
     * forward primer tail = reverse-complement of sequence downstream of the cut
     * reverse primer tail = sequence upstream of the cut
-This matches the pMMB BamHI example provided by the user.
 """
 
 from __future__ import annotations
