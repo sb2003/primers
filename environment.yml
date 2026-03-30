@@ -7,3 +7,4 @@ dependencies:
   - pip
   - pip:
       - biopython==1.83
+      - tqdm

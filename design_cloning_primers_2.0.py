@@ -29,6 +29,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
+from tqdm import tqdm
+
 from Bio import Restriction, SeqIO
 from Bio.Seq import Seq
 
@@ -106,7 +108,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--circular-plasmid", action="store_true", default=True)
     p.add_argument("--linear-plasmid", action="store_false", dest="circular_plasmid")
     p.add_argument("--allow-unmatched-genes", action="store_true")
-    p.add_argument("--progress-every", type=int, default=100)
     p.add_argument("--gc-clamp", type=int, default=1,
                    help="Minimum number of G/C bases at the 3' end of each primer (default: 1)")
     return p.parse_args()
@@ -453,14 +454,13 @@ def main() -> int:
             "reverse_binding_primer_5to3",
         ])
 
-        for i, (gene_id, gene_seq) in enumerate(genes, start=1):
+        for gene_id, gene_seq in tqdm(genes, desc="Designing primers", unit="gene"):
             try:
                 warnings = []
                 matches = find_exact_matches(genome_records, gene_seq)
                 contig_id, start_1based, end_1based, match_status = summarize_matches(matches)
                 if match_status == "not_found" and not args.allow_unmatched_genes:
                     skipped += 1
-                    print(f"Skipping {gene_id}: gene_not_found_exactly_in_genome", file=sys.stderr)
                     continue
                 if match_status == "not_found":
                     warnings.append("gene_not_found_exactly_in_genome")
@@ -505,10 +505,7 @@ def main() -> int:
                 written += 1
             except Exception as exc:
                 failed += 1
-                print(f"[ERROR] gene {gene_id}: {exc}", file=sys.stderr)
-            finally:
-                if args.progress_every > 0 and i % args.progress_every == 0:
-                    print(f"Processed {i}/{len(genes)} genes | written={written} skipped={skipped} failed={failed}", file=sys.stderr)
+                tqdm.write(f"[ERROR] gene {gene_id}: {exc}")
 
     print(
         f"Done. Processed {len(genes)} genes across {len(genome_records)} genome record(s) from {len(args.genome)} file(s) | "
