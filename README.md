@@ -29,7 +29,7 @@ Create the conda env:
 
 Example call:
 
-    python design_cloning_primers_2.0.py \
+    conda run -n primers python design_cloning_primers_2.0.py \ 
       --plasmid vector.fasta \
       --genome chr1.fasta chr2.fasta \
       --genes genes.fasta \
@@ -37,7 +37,10 @@ Example call:
       --left-enzyme BamHI \
       --right-enzyme BamHI \
       --tail-mode plasmid_overlaps \
-      --replace-arc right_to_left
+      --replace-arc right_to_left \                                                                                                                           
+      --overlap-length 20 \
+      --opt-primer-size 20 \                                                                                                                                  
+      --max-primer-size 22                                                                                                                        
 
 
 Notes:
