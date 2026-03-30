@@ -20,7 +20,7 @@ Automated cloning primer design from a plasmid, genome, and gene sequences.
 ## Setup
 
 ```bash
-git clone https://github.com/sb2003/primers.git
+git clone https://github.com/sbatory/primers.git
 conda env create -f environment.yml
 conda activate primers
 ```
