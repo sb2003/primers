@@ -236,14 +236,9 @@ def build_tails(plasmid_seq: str, left_enzyme, right_enzyme, args: argparse.Name
         right_tail = sanitize_dna(args.right_clamp) + sanitize_dna(right_enzyme.site) + sanitize_dna(args.right_extra)
         return left_tail, right_tail, left0, right0, left_cuts, right_cuts, warnings, "restriction_sites"
 
-    # plasmid_overlaps mode
     if args.circular_plasmid and left0 == right0:
-        # Single-cut circular vector:
-        # use the flanks adjacent to the ACTUAL linearized vector ends.
-        # For BamHI on pMMB this gives the user's expected behavior:
-        #   reverse tail = upstream sequence ending at the top-strand cut
-        #   forward tail = reverse-complement of the opposite end, starting at the
-        #                  last base of the recognition site on the top strand.
+        # Single-cut circular vector: extract flanks on either side of the linearized ends.
+        # reverse tail = upstream of cut; forward tail = RC of downstream from last base of site.
         site_start0 = left0 - int(left_enzyme.fst5)
         site_end0 = site_start0 + len(left_enzyme.site)
         upstream_raw, left_wrapped = extract_upstream(plasmid_seq, left0, args.overlap_length, circular=True)
@@ -254,7 +249,7 @@ def build_tails(plasmid_seq: str, left_enzyme, right_enzyme, args: argparse.Name
             warnings.append("right_overlap_wrapped_around_circular_origin")
         left_tail = rc(downstream_raw) + sanitize_dna(args.left_extra)
         right_tail = upstream_raw + sanitize_dna(args.right_extra)
-        warnings.append("single_cut_circular_vector_mode=linearized_end_flanks;forward_gets_rc_of_opposite_end;reverse_gets_upstream_to_cut")
+        warnings.append("single_cut_circular_vector_mode")
         return left_tail, right_tail, left0, right0, left_cuts, right_cuts, warnings, "single_cut_circular"
 
     if args.circular_plasmid:
