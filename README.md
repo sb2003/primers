@@ -29,7 +29,7 @@ Create the conda env:
 
 Example call:
 
-    conda run -n primers python design_cloning_primers_2.0.py \
+    python design_cloning_primers_2.0.py \
       --plasmid vector.fasta \
       --genome chr1.fasta chr2.fasta \
       --genes genes.fasta \
