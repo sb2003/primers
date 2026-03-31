@@ -1,9 +1,23 @@
-design_cloning_primers
-======================
+design_cloning_primers / design_deletion_primers
+=================================================
 
-Automated cloning primer design from a plasmid, genome, and gene sequences.
+Automated primer design for cloning and in-frame deletion of genes in *Vibrio cholerae* (or any organism with a sequenced genome).
 
-## What it does
+## Installation
+
+```bash
+git clone https://github.com/sbatory/primers.git
+conda env create -f environment.yml
+conda activate primers
+```
+
+---
+
+## Cloning primers (`design_cloning_primers_2.0.py`)
+
+Designs primers to amplify each gene for insertion into a vector using HiFi assembly or restriction cloning.
+
+### What it does
 
 - Reads a plasmid FASTA, one or more genome FASTAs, and a FASTA of gene sequences.
 - Designs primers that amplify each gene in its entirety, with a 3' GC clamp.
@@ -12,20 +26,7 @@ Automated cloning primer design from a plasmid, genome, and gene sequences.
 - Writes a CSV with full primers, average Tm, and per-primer Tm values.
 - Warns if the chosen enzymes cut the insert or are not unique in the plasmid.
 
-## Dependencies
-
-- biopython
-- primer3-py
-
-## Setup
-
-```bash
-git clone https://github.com/sbatory/primers.git
-conda env create -f environment.yml
-conda activate primers
-```
-
-## Example
+### Example
 
 ```bash
 python design_cloning_primers_2.0.py \
@@ -42,7 +43,7 @@ python design_cloning_primers_2.0.py \
   --max-primer-size 22
 ```
 
-## Key parameters
+### Key parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -54,7 +55,7 @@ python design_cloning_primers_2.0.py \
 | `--gc-clamp` | 1 | Minimum G/C bases required at the 3' end of each primer |
 | `--mv-conc` | 500.0 | Monovalent salt concentration (mM) used for Tm calculation |
 
-## Output columns
+### Output columns
 
 | Column | Description |
 |--------|-------------|
@@ -72,8 +73,88 @@ python design_cloning_primers_2.0.py \
 | `pair_penalty` | Primer3 pair penalty score (lower is better; blank if fallback was used) |
 | `warnings` | Semicolon-separated warnings (e.g. multiple genome matches, fallback used) |
 
-## Notes
+### Notes
 
 - Tm values are for the gene-binding region only, not the full tailed primer.
 - If a gene is not found exactly in the genome, use `--allow-unmatched-genes` to still design primers from the provided sequence.
 - If primer3 cannot satisfy the GC clamp within the size range, the search extends by up to 10 bp. If no GC-clamped primer is found, the best available primer is used with a warning.
+
+---
+
+## Deletion primers (`design_deletion_primers.py`)
+
+Designs four primers per gene to create an in-frame chromosomal deletion, ready for HiFi assembly into a suicide vector.
+
+### What it does
+
+For each gene, two 509 bp amplicons are designed (500 bp of flanking genomic sequence + 9 bp into the gene to preserve the reading frame):
+
+```
+Genomic context:
+
+  ──────────────[  upstream  ]──[9bp]════════════════[9bp]──[  downstream  ]──────────────
+                                 ↑                          ↑
+                             gene start                  gene end
+
+Left amplicon (509 bp):        [  upstream 500 bp  ][9bp]
+  Primer A →                                            ← Primer B
+
+Right amplicon (509 bp):                               [9bp][  downstream 500 bp  ]
+  Primer C →                                                                  ← Primer D
+```
+
+- Primer A and D carry 5' vector overlap tails (for HiFi assembly into the digested vector).
+- Primer B and C carry 5' junction overlap tails (so the two amplicons overlap each other for HiFi stitching).
+- Tails are lowercase; gene-binding regions are uppercase in the output.
+- Tm values are reported for the binding region only.
+- Genes on the minus strand are handled by reverse-complementing the full context, so primer design is always in the gene-reading direction.
+
+### Example
+
+For insertion into pGP704sacB digested with NcoI and SacI:
+
+```bash
+python design_deletion_primers.py \
+  --plasmid pGP704sacB.fasta \
+  --genome chr1.fasta chr2.fasta \
+  --genes genes.fasta \
+  --output deletion_primers.csv \
+  --left-enzyme NcoI \
+  --right-enzyme SacI
+```
+
+### Key parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--left-enzyme` | required | Enzyme at the upstream (Primer A) end of the insert |
+| `--right-enzyme` | required | Enzyme at the downstream (Primer D) end of the insert |
+| `--flank-length` | 509 | Total amplicon length (500 bp outside + 9 bp into gene) |
+| `--overlap-length` | 20 | Length (bp) of the vector overlap tail on Primers A and D |
+| `--junction-overlap` | 10 | Length (bp) of the AB-to-CD junction overlap tail on Primers B and C |
+| `--opt-tm` | 60.0 | Target Tm (°C) for the gene-binding region |
+| `--gc-clamp` | 1 | Minimum G/C bases required at the 3' end of each primer |
+| `--mv-conc` | 500.0 | Monovalent salt concentration (mM) used for Tm calculation |
+
+### Output columns
+
+| Column | Description |
+|--------|-------------|
+| `gene_id` | Gene identifier from the input FASTA |
+| `gene_length_bp` | Length of the gene sequence |
+| `primer_A_5to3` | Full Primer A (vector tail + binding region) |
+| `primer_B_5to3` | Full Primer B (junction tail + binding region) |
+| `primer_C_5to3` | Full Primer C (junction tail + binding region) |
+| `primer_D_5to3` | Full Primer D (vector tail + binding region) |
+| `tm_A_c` – `tm_D_c` | Tm of each binding region (°C) |
+| `avg_tm_c` | Average Tm across all four binding regions (°C) |
+| `warnings` | Semicolon-separated warnings, including `VERIFY_LOCUS` if the gene appears at multiple genomic locations |
+| `genome_contig` | Contig where the gene was found |
+| `genome_start_1based` / `genome_end_1based` | Genomic coordinates of the gene |
+| `strand` | Strand of the gene (`+` or `-`) |
+
+### Notes
+
+- The left enzyme should be the one whose cut site is at the **upstream** end of the insert (the Primer A side). For pGP704sacB with NcoI + SacI, this is NcoI.
+- Sticky-end offsets are handled automatically so the extracted vector overlap matches what NEBuilder/HiFi assembly expects.
+- If a gene appears at multiple genomic locations, a `VERIFY_LOCUS` warning is added and the first match is used. Always confirm you are targeting the correct copy before ordering primers.
