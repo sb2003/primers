@@ -1,7 +1,7 @@
 design_cloning_primers / design_deletion_primers
 =================================================
 
-Automated primer design for cloning and in-frame deletion of genes in *Vibrio cholerae* (or any organism with a sequenced genome).
+Automated primer design for cloning and in-frame deletion of genes in *Vibrio cholerae*.
 
 ## Installation
 
