@@ -87,7 +87,13 @@ Designs four primers per gene to create an in-frame chromosomal deletion, ready 
 
 ### What it does
 
-For each gene, two 509 bp amplicons are designed (500 bp of flanking genomic sequence + 9 bp into the gene to preserve the reading frame):
+For each gene, two amplicons are designed (flanking genomic sequence + 9 bp into the gene to preserve the reading frame). Flank length is auto-scaled by gene size:
+
+| Gene length | Flank | Amplicon |
+|-------------|-------|---------|
+| < 1500 bp | 500 bp | 509 bp |
+| 1500–3000 bp | 700 bp | 709 bp |
+| > 3000 bp | 900 bp | 909 bp |
 
 ```
 Genomic context:
@@ -129,7 +135,7 @@ python design_deletion_primers.py \
 |-----------|---------|-------------|
 | `--left-enzyme` | required | Enzyme at the upstream (Primer A) end of the insert |
 | `--right-enzyme` | required | Enzyme at the downstream (Primer D) end of the insert |
-| `--flank-length` | 509 | Total amplicon length (500 bp outside + 9 bp into gene) |
+| `--flank-length` | auto | Override auto-scaling: set a fixed amplicon length (outside bp + 9 bp into gene) |
 | `--overlap-length` | 20 | Length (bp) of the vector overlap tail on Primers A and D |
 | `--junction-overlap` | 10 | Length (bp) of the AB-to-CD junction overlap tail on Primers B and C |
 | `--opt-tm` | 60.0 | Target Tm (°C) for the gene-binding region |
