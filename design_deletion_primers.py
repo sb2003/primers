@@ -86,9 +86,9 @@ def parse_args() -> argparse.Namespace:
                    help="Output CSV path")
 
     p.add_argument("--left-enzyme", required=True,
-                   help="Restriction enzyme at the left cloning site (e.g. SacI)")
+                   help="Enzyme at the upstream (Primer A) end of the insert (e.g. NcoI for pGP704sacB)")
     p.add_argument("--right-enzyme", required=True,
-                   help="Restriction enzyme at the right cloning site (e.g. NcoI)")
+                   help="Enzyme at the downstream (Primer D) end of the insert (e.g. SacI for pGP704sacB)")
     p.add_argument("--left-cut-index", type=int, default=0,
                    help="Which cut to use if the left enzyme cuts multiple times (default: 0)")
     p.add_argument("--right-cut-index", type=int, default=0,
@@ -306,6 +306,15 @@ def extract_context(
         left_block  = up_seq + gene_start_seq
         right_block = gene_end_seq + dn_seq
     else:
+        # Minus-strand gene: all coordinates on the genomic + strand, but the gene
+        # reads right-to-left.  We reverse-complement everything so that primer
+        # design can proceed identically to the plus-strand case.
+        #
+        # In gene-reading direction:
+        #   "upstream"   = genomic downstream  (RC'd)
+        #   "gene start" = genomic gene end     (RC'd)  ← last GENE_OVERLAP bp on + strand
+        #   "gene end"   = genomic gene start   (RC'd)  ← first GENE_OVERLAP bp on + strand
+        #   "downstream" = genomic upstream     (RC'd)
         up_start         = max(0, match.start_0based - upstream_len)
         up_seq_raw       = contig_seq[up_start : match.start_0based]
         gene_start_raw   = contig_seq[match.start_0based : match.start_0based + GENE_OVERLAP]
@@ -387,9 +396,12 @@ def design_deletion_primers(
     bind_c = best_primer(right_block, from_end=False, args=args)
     bind_d = best_primer(right_block, from_end=True,  args=args)
 
-    # Junction tails link the two amplicons for HiFi assembly:
-    #   tail_b = RC of the first junction_overlap bp of the right amplicon
-    #   tail_c = last junction_overlap bp of the left amplicon
+    # Junction tails create the overlap between the AB and CD amplicons so that
+    # HiFi assembly can stitch them together at the deletion junction.
+    #   tail_b = RC of the first junction_overlap bp of right_block
+    #            → the end of the AB amplicon will overlap with the start of CD
+    #   tail_c = last junction_overlap bp of left_block
+    #            → the start of the CD amplicon will overlap with the end of AB
     jn = args.junction_overlap
     tail_b = rc(right_block[:jn])
     tail_c = left_block[-jn:]
