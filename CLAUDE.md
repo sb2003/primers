@@ -16,7 +16,7 @@ python design_cloning_primers_2.0.py ...
 ## Standard command
 ```bash
 python design_cloning_primers_2.0.py \
-  --plasmid pMMB.fasta \
+  --plasmid pMMB67EH.fasta \
   --genome chr1.fasta chr2.fasta \
   --genes genes.fasta \
   --output cloning_primers.csv \
