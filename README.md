@@ -102,11 +102,8 @@ Genomic context:
                                                  ↑                                        ↑
                                              gene start                               gene end
 
-Left amplicon (509 bp):
-Primer A →[────────── upstream 500 bp ──────────][9bp]← Primer B
-
-Right amplicon (509 bp):
-                                                                            Primer C →[9bp][────────── downstream 500 bp ──────────]← Primer D
+Left amplicon (509 bp):                                                     Right amplicon (509 bp):
+Primer A →[────────── upstream 500 bp ──────────][9bp]← Primer B            Primer C →[9bp][────────── downstream 500 bp ──────────]← Primer D
 ```
 
 - Primer A and D carry 5' vector overlap tails (for HiFi assembly into the digested vector).
