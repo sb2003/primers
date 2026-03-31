@@ -92,15 +92,15 @@ For each gene, two 509 bp amplicons are designed (500 bp of flanking genomic seq
 ```
 Genomic context:
 
-  ────────[  upstream  ]──[9bp]══════════════════[9bp]──[  downstream  ]────────
-                           ↑                            ↑
-                       gene start                   gene end
+  ───────────────────────────────[  upstream  ]──[9bp]════════════════════════════════[9bp]──[  downstream  ]────────
+                                                 ↑                                        ↑
+                                             gene start                               gene end
 
 Left amplicon (509 bp):
-  Primer A →[────────── upstream 500 bp ──────────][9bp]← Primer B
+Primer A →[────────── upstream 500 bp ──────────][9bp]← Primer B
 
 Right amplicon (509 bp):
-                    Primer C →[9bp][────────── downstream 500 bp ──────────]← Primer D
+                                                                              Primer C →[9bp][────────── downstream 500 bp ──────────]← Primer D
 ```
 
 - Primer A and D carry 5' vector overlap tails (for HiFi assembly into the digested vector).
