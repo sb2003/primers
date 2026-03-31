@@ -101,8 +101,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--junction-overlap", type=int, default=10,
                    help="Length of the AB-to-CD junction overlap tail on Primers B and C (default: 10)")
 
-    p.add_argument("--flank-length", type=int, default=509,
-                   help="Total amplicon length: 500 bp outside + 9 bp into gene (default: 509)")
+    p.add_argument("--flank-length", type=int, default=None,
+                   help=(
+                       "Total amplicon length (outside bp + 9 bp into gene). "
+                       "Default: auto-scaled by gene length "
+                       "(<1500 bp → 509, 1500–3000 bp → 709, >3000 bp → 909)"
+                   ))
     p.add_argument("--min-primer-size", type=int, default=18)
     p.add_argument("--opt-primer-size", type=int, default=20)
     p.add_argument("--max-primer-size", type=int, default=28)
@@ -427,6 +431,24 @@ def design_deletion_primers(
 
 
 # ---------------------------------------------------------------------------
+# Flank length selection
+# ---------------------------------------------------------------------------
+
+def auto_flank(gene_length: int) -> int:
+    """
+    Choose flank length based on gene size (per mentor guidance):
+      < 1500 bp  → 500 bp outside + 9 bp into gene = 509
+      1500–3000  → 700 bp outside + 9 bp into gene = 709
+      > 3000 bp  → 900 bp outside + 9 bp into gene = 909
+    """
+    if gene_length < 1500:
+        return 509
+    if gene_length <= 3000:
+        return 709
+    return 909
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -502,8 +524,9 @@ def main() -> int:
                     )
 
                 match = matches[0]
+                flank = args.flank_length if args.flank_length is not None else auto_flank(len(gene_seq))
                 left_block, right_block, edge_note = extract_context(
-                    genome_records, match, args.flank_length
+                    genome_records, match, flank
                 )
                 if edge_note:
                     warnings.append(edge_note)
