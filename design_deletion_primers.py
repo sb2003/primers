@@ -431,6 +431,28 @@ def design_deletion_primers(
 
 
 # ---------------------------------------------------------------------------
+# Amplicon enzyme check
+# ---------------------------------------------------------------------------
+
+def check_enzyme_cuts_in_amplicons(left_block: str, right_block: str,
+                                    left_enzyme, right_enzyme) -> List[str]:
+    """
+    Warn if either cloning enzyme cuts within the AB or CD amplicon sequences.
+    Such a cut would destroy the insert during vector digestion.
+    """
+    warnings: List[str] = []
+    for enzyme in set([left_enzyme, right_enzyme]):
+        for block_name, block_seq in [("AB", left_block), ("CD", right_block)]:
+            cuts = enzyme.search(Seq(block_seq), linear=True)
+            if cuts:
+                warnings.append(
+                    f"{enzyme.__name__} cuts within the {block_name} amplicon — "
+                    f"this insert will be destroyed during vector digestion"
+                )
+    return warnings
+
+
+# ---------------------------------------------------------------------------
 # Flank length selection
 # ---------------------------------------------------------------------------
 
@@ -531,6 +553,10 @@ def main() -> int:
                 )
                 if edge_note:
                     warnings.append(edge_note)
+
+                warnings.extend(check_enzyme_cuts_in_amplicons(
+                    left_block, right_block, left_enzyme, right_enzyme
+                ))
 
                 result = design_deletion_primers(
                     left_block, right_block,
