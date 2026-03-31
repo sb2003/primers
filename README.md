@@ -30,7 +30,7 @@ Designs primers to amplify each gene for insertion into a vector using HiFi asse
 
 ```bash
 python design_cloning_primers_2.0.py \
-  --plasmid vector.fasta \
+  --plasmid pMMB.fasta \
   --genome chr1.fasta chr2.fasta \
   --genes genes.fasta \
   --output cloning_primers.csv \
