@@ -486,6 +486,7 @@ def main() -> int:
             "tm_C_c",
             "tm_D_c",
             "avg_tm_c",
+            "flank_length_bp",
             "warnings",
             "",
             "genome_contig",
@@ -506,7 +507,7 @@ def main() -> int:
                     warnings.append("gene_not_found_in_genome")
                     writer.writerow([gene_id, len(gene_seq),
                                      "", "", "", "", "", "", "", "",
-                                     "", ";".join(warnings),
+                                     "", "", ";".join(warnings),
                                      "", "", "", "", ""])
                     written += 1
                     continue
@@ -550,6 +551,7 @@ def main() -> int:
                     round(result.tm_c, 2),
                     round(result.tm_d, 2),
                     avg_tm,
+                    flank,
                     ";".join(warnings),
                     "",
                     contig_to_file.get(match.contig_id, match.contig_id),

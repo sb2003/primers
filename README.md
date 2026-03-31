@@ -90,10 +90,11 @@ Designs four primers per gene to create an in-frame chromosomal deletion, ready 
 For each gene, two amplicons are designed (flanking genomic sequence + 9 bp into the gene to preserve the reading frame). Flank length is auto-scaled by gene size:
 
 | Gene length | Flank | Amplicon |
-|-------------|-------|---------|
+|-------------|-------|----------|
 | < 1500 bp | 500 bp | 509 bp |
 | 1500–3000 bp | 700 bp | 709 bp |
 | > 3000 bp | 900 bp | 909 bp |
+
 
 ```
 Genomic context:
@@ -151,6 +152,7 @@ python design_deletion_primers.py \
 | `primer_D_5to3` | Full Primer D (vector tail + binding region) |
 | `tm_A_c` – `tm_D_c` | Tm of each binding region (°C) |
 | `avg_tm_c` | Average Tm across all four binding regions (°C) |
+| `flank_length_bp` | Flank length used for this gene (auto-scaled or overridden) |
 | `warnings` | Semicolon-separated warnings, including `VERIFY_LOCUS` if the gene appears at multiple genomic locations |
 | `genome_contig` | Contig where the gene was found |
 | `genome_start_1based` / `genome_end_1based` | Genomic coordinates of the gene |
