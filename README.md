@@ -3,6 +3,11 @@ design_cloning_primers / design_deletion_primers
 
 Automated primer design for cloning and in-frame deletion of genes in *Vibrio cholerae*.
 
+## Prerequisites
+
+- [Git](https://git-scm.com/downloads)
+- [Conda](https://docs.conda.io/en/latest/miniconda.html) (Miniconda or Anaconda)
+
 ## Installation
 
 ```bash
