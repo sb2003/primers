@@ -40,8 +40,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
-from tqdm import tqdm
-
 from primer_utils import (
     GenomeMatch,
     calc_tm,
@@ -456,146 +454,134 @@ def main() -> int:
     genome_records, contig_to_file = load_genome_records(args.genome)
     genes = load_multi_fasta(args.genes)
     genes = filter_genes_by_ids(genes, args.gene_ids)
-    if not genes:
-        print("Error: no genes to process after --gene-ids filter", file=sys.stderr)
+    if len(genes) != 1:
+        print(
+            f"Error: this script processes one gene at a time (got {len(genes)}). "
+            f"Use --gene-ids to select a single gene.",
+            file=sys.stderr,
+        )
         return 1
+    gene_id, gene_seq = genes[0]
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    written = 0
-    skipped = 0
-    failed  = 0
+    warnings: List[str] = []
+
+    # For a tag_name like "GGGGG_GFP", the LT primers are labelled
+    # "linker-GFP_{fw,rev}" to match the reference SnapGene scheme. If the tag
+    # name has no underscore, use the whole name as the protein part.
+    _, _, protein_part = tag_name.partition("_")
+    protein_part = protein_part or tag_name
+
+    name_ab_fwd = f"AB-{gene_id}_fw"
+    name_ab_rev = f"AB-{gene_id}_rev"
+    name_lt_fwd = f"linker-{protein_part}_fw"
+    name_lt_rev = f"linker-{protein_part}_rev"
+    name_cd_fwd = f"CD-{gene_id}_fw"
+    name_cd_rev = f"CD-{gene_id}_rev"
+
+    matches = find_exact_matches(genome_records, gene_seq)
+
+    if not matches:
+        if not args.allow_unmatched_genes:
+            print(f"Error: gene {gene_id} not found in genome", file=sys.stderr)
+            return 1
+        warnings.append("gene_not_found_in_genome")
+        primers = [
+            (name_ab_fwd, "", None),
+            (name_ab_rev, "", None),
+            (name_lt_fwd, "", None),
+            (name_lt_rev, "", None),
+            (name_cd_fwd, "", None),
+            (name_cd_rev, "", None),
+        ]
+        match_info: Tuple = ("", "", "", "")
+    else:
+        if len(matches) > 1:
+            loci = "; ".join(
+                f"{contig_to_file.get(m.contig_id, m.contig_id)}:"
+                f"{m.start_0based + 1}-{m.end_0based}({m.strand})"
+                for m in matches
+            )
+            warnings.append(
+                f"VERIFY_LOCUS: gene found at {len(matches)} genomic locations "
+                f"({loci}) — flanking sequence taken from first match; "
+                f"primers may target the wrong copy"
+            )
+
+        match = matches[0]
+        left_block, right_block, edge_note = extract_tag_context(
+            genome_records, match, args.flank_length
+        )
+        if edge_note:
+            warnings.append(edge_note)
+
+        result = design_tag_primers(
+            left_block, right_block,
+            vector_left_tail, vector_right_tail,
+            tag_seq,
+            args,
+        )
+
+        primers = [
+            (name_ab_fwd, result.full_ab_fwd, result.tm_ab_fwd),
+            (name_ab_rev, result.full_ab_rev, result.tm_ab_rev),
+            (name_lt_fwd, result.full_lt_fwd, result.tm_lt_fwd),
+            (name_lt_rev, result.full_lt_rev, result.tm_lt_rev),
+            (name_cd_fwd, result.full_cd_fwd, result.tm_cd_fwd),
+            (name_cd_rev, result.full_cd_rev, result.tm_cd_rev),
+        ]
+        match_info = (
+            contig_to_file.get(match.contig_id, match.contig_id),
+            match.start_0based + 1,
+            match.end_0based,
+            match.strand,
+        )
 
     with out_path.open("w", newline="") as fh:
         writer = csv.writer(fh)
         writer.writerow([
+            "name",
+            "sequence_5to3",
+            "tm_c",
+            "length_bp",
             "gene_id",
-            "gene_length_bp",
             "tag_name",
-            "primer_AB_fwd_name", "primer_AB_fwd_5to3",
-            "primer_AB_rev_name", "primer_AB_rev_5to3",
-            "primer_LT_fwd_name", "primer_LT_fwd_5to3",
-            "primer_LT_rev_name", "primer_LT_rev_5to3",
-            "primer_CD_fwd_name", "primer_CD_fwd_5to3",
-            "primer_CD_rev_name", "primer_CD_rev_5to3",
-            "tm_AB_fwd_c",
-            "tm_AB_rev_c",
-            "tm_LT_fwd_c",
-            "tm_LT_rev_c",
-            "tm_CD_fwd_c",
-            "tm_CD_rev_c",
-            "avg_tm_c",
+            "gene_length_bp",
             "flank_length_bp",
-            "warnings",
-            "",
             "genome_contig",
             "genome_start_1based",
             "genome_end_1based",
             "strand",
+            "warnings",
         ])
+        for name, seq, tm in primers:
+            writer.writerow([
+                name,
+                seq,
+                round(tm, 2) if tm is not None else "",
+                len(seq) if seq else "",
+                gene_id,
+                tag_name,
+                len(gene_seq),
+                args.flank_length,
+                match_info[0],
+                match_info[1],
+                match_info[2],
+                match_info[3],
+                ";".join(warnings),
+            ])
+        valid_tms = [tm for _, _, tm in primers if tm is not None]
+        if valid_tms:
+            avg_tm = sum(valid_tms) / len(valid_tms)
+            writer.writerow([""] * 13)
+            writer.writerow([
+                "avg temp", round(avg_tm, 2), "", "",
+                "", "", "", "", "", "", "", "", "",
+            ])
 
-        for gene_id, gene_seq in tqdm(genes, desc="Designing tag primers", unit="gene"):
-            try:
-                warnings: List[str] = []
-
-                # For a tag_name like "GGGGG_GFP", the LT primers are labelled
-                # "linker-GFP_{fw,rev}" to match the reference SnapGene scheme.
-                # If the tag name has no underscore, use the whole name as the
-                # protein part.
-                _, _, protein_part = tag_name.partition("_")
-                protein_part = protein_part or tag_name
-
-                name_ab_fwd = f"AB-{gene_id}_fw"
-                name_ab_rev = f"AB-{gene_id}_rev"
-                name_lt_fwd = f"linker-{protein_part}_fw"
-                name_lt_rev = f"linker-{protein_part}_rev"
-                name_cd_fwd = f"CD-{gene_id}_fw"
-                name_cd_rev = f"CD-{gene_id}_rev"
-
-                matches = find_exact_matches(genome_records, gene_seq)
-
-                if not matches:
-                    if not args.allow_unmatched_genes:
-                        skipped += 1
-                        continue
-                    warnings.append("gene_not_found_in_genome")
-                    writer.writerow([gene_id, len(gene_seq), tag_name,
-                                     name_ab_fwd, "", name_ab_rev, "",
-                                     name_lt_fwd, "", name_lt_rev, "",
-                                     name_cd_fwd, "", name_cd_rev, "",
-                                     "", "", "", "", "", "", "",
-                                     "", ";".join(warnings),
-                                     "", "", "", "", ""])
-                    written += 1
-                    continue
-
-                if len(matches) > 1:
-                    loci = "; ".join(
-                        f"{contig_to_file.get(m.contig_id, m.contig_id)}:"
-                        f"{m.start_0based + 1}-{m.end_0based}({m.strand})"
-                        for m in matches
-                    )
-                    warnings.append(
-                        f"VERIFY_LOCUS: gene found at {len(matches)} genomic locations "
-                        f"({loci}) — flanking sequence taken from first match; "
-                        f"primers may target the wrong copy"
-                    )
-
-                match = matches[0]
-                left_block, right_block, edge_note = extract_tag_context(
-                    genome_records, match, args.flank_length
-                )
-                if edge_note:
-                    warnings.append(edge_note)
-
-                result = design_tag_primers(
-                    left_block, right_block,
-                    vector_left_tail, vector_right_tail,
-                    tag_seq,
-                    args,
-                )
-                avg_tm = round(
-                    (result.tm_ab_fwd + result.tm_ab_rev + result.tm_lt_fwd
-                     + result.tm_lt_rev + result.tm_cd_fwd + result.tm_cd_rev) / 6,
-                    2,
-                )
-
-                writer.writerow([
-                    gene_id,
-                    len(gene_seq),
-                    tag_name,
-                    name_ab_fwd, result.full_ab_fwd,
-                    name_ab_rev, result.full_ab_rev,
-                    name_lt_fwd, result.full_lt_fwd,
-                    name_lt_rev, result.full_lt_rev,
-                    name_cd_fwd, result.full_cd_fwd,
-                    name_cd_rev, result.full_cd_rev,
-                    round(result.tm_ab_fwd, 2),
-                    round(result.tm_ab_rev, 2),
-                    round(result.tm_lt_fwd, 2),
-                    round(result.tm_lt_rev, 2),
-                    round(result.tm_cd_fwd, 2),
-                    round(result.tm_cd_rev, 2),
-                    avg_tm,
-                    args.flank_length,
-                    ";".join(warnings),
-                    "",
-                    contig_to_file.get(match.contig_id, match.contig_id),
-                    match.start_0based + 1,
-                    match.end_0based,
-                    match.strand,
-                ])
-                written += 1
-
-            except Exception as exc:
-                failed += 1
-                tqdm.write(f"[ERROR] gene {gene_id}: {exc}")
-
-    print(
-        f"Done. {len(genes)} genes | written={written} skipped={skipped} failed={failed}",
-        file=sys.stderr,
-    )
+    print(f"Done. Wrote primers for {gene_id} to {out_path}", file=sys.stderr)
     return 0
 
 

@@ -175,11 +175,11 @@ python design_deletion_primers.py \
 
 ## Protein tag primers (`design_protein_tag_primers.py`)
 
-Designs six primers per gene across three PCR amplicons to build a C-terminal protein fusion, ready for HiFi assembly into a suicide vector.
+Designs six primers across three PCR amplicons to build a C-terminal protein fusion for a single gene, ready for HiFi assembly into a suicide vector. This script processes **one gene at a time** — pass the target gene via `--gene-ids`.
 
 ### What it does
 
-For each gene, three amplicons are designed and stitched together by HiFi/Gibson assembly:
+Three amplicons are designed and stitched together by HiFi/Gibson assembly:
 
 ```
 Final assembled insert (top strand, 5' → 3'):
@@ -204,16 +204,17 @@ Final assembled insert (top strand, 5' → 3'):
 
 ### Example
 
-For insertion into pGP704sacB digested with NcoI and SacI, fusing `GGGGG_GFP` (5 × Gly linker + superfolder GFP) to each gene's C-terminus:
+For insertion into pGP704sacB digested with NcoI and SacI, fusing `GGGGG_GFP` (5 × Gly linker + superfolder GFP) to the C-terminus of VC1152:
 
 ```bash
 python design_protein_tag_primers.py \
   --plasmid pGP704sacB.fasta \
   --genome chr1.fasta chr2.fasta \
   --genes genes.fasta \
-  --output tag_primers.csv \
+  --output vc1152_tag_primers.csv \
   --left-enzyme NcoI \
-  --right-enzyme SacI
+  --right-enzyme SacI \
+  --gene-ids VC1152
 ```
 
 To use a custom tag, supply a FASTA file containing the full `[linker + protein + stop]` sequence:
@@ -223,8 +224,9 @@ python design_protein_tag_primers.py \
   --plasmid pGP704sacB.fasta \
   --genome chr1.fasta chr2.fasta \
   --genes genes.fasta \
-  --output tag_primers.csv \
+  --output vc1152_tag_primers.csv \
   --left-enzyme NcoI --right-enzyme SacI \
+  --gene-ids VC1152 \
   --tag my_linker_mCherry.fasta
 ```
 
@@ -241,7 +243,7 @@ python design_protein_tag_primers.py \
 | `--opt-tm` | 60.0 | Target Tm (°C) for the gene/tag-binding region |
 | `--gc-clamp` | 1 | Minimum G/C bases required at the 3' end of each primer |
 | `--mv-conc` | 500.0 | Monovalent salt concentration (mM) used for Tm calculation |
-| `--gene-ids` | *(all)* | Space-separated list of gene IDs to process; see [Running on a subset of genes](#running-on-a-subset-of-genes) |
+| `--gene-ids` | required | Gene ID to tag. Must resolve to exactly one gene from the input FASTA. |
 
 ### Hardcoded tags
 
@@ -251,9 +253,9 @@ python design_protein_tag_primers.py \
 
 Additional tags can be added to `HARDCODED_TAGS` in `design_protein_tag_primers.py`, or supplied per-run via `--tag path/to/tag.fasta`.
 
-### Output columns
+### Output format
 
-Each primer has a paired `*_name` / `*_5to3` column. Names follow the scheme:
+The output CSV has **one row per primer** (6 rows total), followed by a blank row and an `avg temp` row with the mean Tm across all six binding regions. Primer names follow the scheme:
 
 - **AB_fwd / AB_rev** → `AB-{gene}_fw` / `AB-{gene}_rev`
 - **LT_fwd / LT_rev** → `linker-{protein}_fw` / `linker-{protein}_rev`, where `{protein}` is the part of the tag name after the first `_` (e.g. `GGGGG_GFP` → `linker-GFP`)
@@ -261,22 +263,18 @@ Each primer has a paired `*_name` / `*_5to3` column. Names follow the scheme:
 
 | Column | Description |
 |--------|-------------|
+| `name` | Primer name (see scheme above) |
+| `sequence_5to3` | Full primer sequence (lowercase tail + uppercase binding region) |
+| `tm_c` | Tm of the binding region only (°C) |
+| `length_bp` | Full primer length |
 | `gene_id` | Gene identifier from the input FASTA |
-| `gene_length_bp` | Length of the gene sequence |
 | `tag_name` | Name of the tag used (from `--tag`) |
-| `primer_AB_fwd_*` | Fwd primer for the AB amplicon (vector tail + upstream flank binding) |
-| `primer_AB_rev_*` | Rev primer for the AB amplicon (junction tail + gene-end binding) |
-| `primer_LT_fwd_*` | Fwd primer for the LT amplicon (gene-end tail + tag binding) |
-| `primer_LT_rev_*` | Rev primer for the LT amplicon (junction tail + tag binding) |
-| `primer_CD_fwd_*` | Fwd primer for the CD amplicon (junction tail + downstream flank binding) |
-| `primer_CD_rev_*` | Rev primer for the CD amplicon (vector tail + downstream flank binding) |
-| `tm_AB_fwd_c` – `tm_CD_rev_c` | Tm of each binding region (°C) |
-| `avg_tm_c` | Average Tm across all six binding regions (°C) |
+| `gene_length_bp` | Length of the gene sequence |
 | `flank_length_bp` | Flank length used for this gene |
-| `warnings` | Semicolon-separated warnings, including `VERIFY_LOCUS` if the gene appears at multiple genomic locations |
 | `genome_contig` | Contig where the gene was found |
 | `genome_start_1based` / `genome_end_1based` | Genomic coordinates of the gene |
 | `strand` | Strand of the gene (`+` or `-`) |
+| `warnings` | Semicolon-separated warnings, including `VERIFY_LOCUS` if the gene appears at multiple genomic locations |
 
 ### Notes
 
@@ -289,7 +287,7 @@ Each primer has a paired `*_name` / `*_5to3` column. Names follow the scheme:
 
 ## Running on a subset of genes
 
-All three scripts accept `--gene-ids` to process only specific genes from the input FASTA instead of the entire file. Pass one or more gene IDs:
+`design_cloning_primers_2.0.py` and `design_deletion_primers.py` accept `--gene-ids` to process only specific genes from the input FASTA instead of the entire file. Pass one or more gene IDs:
 
 ```bash
 python design_deletion_primers.py \
@@ -308,3 +306,5 @@ Multiple IDs can be passed at once:
 ```
 
 If any requested IDs are not found in the FASTA, a warning is printed for each missing ID and the script continues with the IDs that were matched. If none are matched, the script exits with an error and does not write an output file.
+
+`design_protein_tag_primers.py` also accepts `--gene-ids`, but it is **required** and must resolve to exactly one gene — the script processes a single gene per run.
