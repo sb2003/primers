@@ -31,19 +31,22 @@ from typing import List, Optional, Sequence, Tuple
 
 from tqdm import tqdm
 
-from Bio import Restriction, SeqIO
-from Bio.Seq import Seq
-
-
-DNA_ALPHABET = set("ACGTN")
-
-
-@dataclass
-class GenomeMatch:
-    contig_id: str
-    start_1based: int
-    end_1based: int
-    strand: str
+from primer_utils import (
+    GenomeMatch,
+    extract_downstream,
+    extract_upstream,
+    filter_genes_by_ids,
+    find_exact_matches,
+    get_enzyme,
+    enzyme_cut_positions_0based,
+    import_primer3,
+    load_genome_records,
+    load_multi_fasta,
+    load_single_sequence,
+    rc,
+    sanitize_dna,
+    select_cut,
+)
 
 
 @dataclass
@@ -110,107 +113,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--allow-unmatched-genes", action="store_true")
     p.add_argument("--gc-clamp", type=int, default=1,
                    help="Minimum number of G/C bases at the 3' end of each primer (default: 1)")
+    p.add_argument("--gene-ids", nargs="+", default=None,
+                   help="Only design primers for these gene IDs (filtered from --genes FASTA). "
+                        "Default: all genes.")
     return p.parse_args()
-
-
-def sanitize_dna(seq: str) -> str:
-    seq = seq.upper().replace("U", "T")
-    bad = sorted({c for c in seq if c not in DNA_ALPHABET})
-    if bad:
-        raise ValueError(f"Unsupported sequence characters: {''.join(bad)}")
-    return seq
-
-
-def load_single_sequence(path: str) -> Tuple[str, str]:
-    records = list(SeqIO.parse(path, "fasta"))
-    if not records:
-        raise ValueError(f"No FASTA records found in {path}")
-    if len(records) == 1:
-        return records[0].id, sanitize_dna(str(records[0].seq))
-    combined = "".join(str(r.seq) for r in records)
-    return "combined_records", sanitize_dna(combined)
-
-
-def load_multi_fasta(path: str) -> List[Tuple[str, str]]:
-    out: List[Tuple[str, str]] = []
-    for record in SeqIO.parse(path, "fasta"):
-        out.append((record.id, sanitize_dna(str(record.seq))))
-    if not out:
-        raise ValueError(f"No FASTA records found in {path}")
-    return out
-
-
-def load_genome_records(paths: Sequence[str]) -> List[Tuple[str, str]]:
-    out: List[Tuple[str, str]] = []
-    seen_ids = set()
-    for path in paths:
-        for rec_id, seq in load_multi_fasta(path):
-            final_id = rec_id
-            if final_id in seen_ids:
-                final_id = f"{Path(path).stem}:{rec_id}"
-            seen_ids.add(final_id)
-            out.append((final_id, seq))
-    if not out:
-        raise ValueError("No genome FASTA records were loaded")
-    return out
-
-
-def rc(seq: str) -> str:
-    return str(Seq(seq).reverse_complement())
-
-
-def get_enzyme(name: str):
-    try:
-        return getattr(Restriction, name)
-    except AttributeError as exc:
-        raise ValueError(f"Unknown restriction enzyme: {name}") from exc
-
-
-# Biopython search() returns 1-based positions immediately after the cut on the top strand.
-def enzyme_cut_positions_0based(enzyme, seq: str, circular: bool) -> List[int]:
-    return sorted({int(hit) - 1 for hit in enzyme.search(Seq(seq), linear=not circular)})
-
-
-def select_cut(cuts: Sequence[int], idx: int, enzyme_name: str) -> int:
-    if not cuts:
-        raise ValueError(f"{enzyme_name} does not cut the plasmid")
-    if idx < 0 or idx >= len(cuts):
-        raise ValueError(f"{enzyme_name} cut index {idx} is out of range; plasmid has {len(cuts)} cut(s)")
-    return cuts[idx]
-
-
-def extract_upstream(seq: str, cut0: int, n: int, circular: bool) -> Tuple[str, bool]:
-    if n < 0:
-        raise ValueError("overlap length must be >= 0")
-    if n == 0:
-        return "", False
-    if n > len(seq):
-        raise ValueError("overlap length cannot exceed plasmid length")
-    if circular:
-        start = cut0 - n
-        if start < 0:
-            return seq[start:] + seq[:cut0], True
-        return seq[start:cut0], False
-    if cut0 < n:
-        raise ValueError("not enough upstream sequence in linear plasmid for requested overlap")
-    return seq[cut0 - n:cut0], False
-
-
-def extract_downstream(seq: str, cut0: int, n: int, circular: bool) -> Tuple[str, bool]:
-    if n < 0:
-        raise ValueError("overlap length must be >= 0")
-    if n == 0:
-        return "", False
-    if n > len(seq):
-        raise ValueError("overlap length cannot exceed plasmid length")
-    if circular:
-        end = cut0 + n
-        if end > len(seq):
-            return seq[cut0:] + seq[: end - len(seq)], True
-        return seq[cut0:end], False
-    if cut0 + n > len(seq):
-        raise ValueError("not enough downstream sequence in linear plasmid for requested overlap")
-    return seq[cut0:cut0 + n], False
 
 
 def resolve_replaced_arc(left0: int, right0: int, n: int, mode: str) -> str:
@@ -273,35 +179,12 @@ def build_tails(plasmid_seq: str, left_enzyme, right_enzyme, args: argparse.Name
     return left_tail, right_tail, left0, right0, left_cuts, right_cuts, warnings, resolved
 
 
-def find_exact_matches(genome_records: Sequence[Tuple[str, str]], gene_seq: str) -> List[GenomeMatch]:
-    out: List[GenomeMatch] = []
-    gene_rc = rc(gene_seq)
-    for contig_id, contig_seq in genome_records:
-        i = contig_seq.find(gene_seq)
-        while i != -1:
-            out.append(GenomeMatch(contig_id, i + 1, i + len(gene_seq), "+"))
-            i = contig_seq.find(gene_seq, i + 1)
-        i = contig_seq.find(gene_rc)
-        while i != -1:
-            out.append(GenomeMatch(contig_id, i + 1, i + len(gene_seq), "-"))
-            i = contig_seq.find(gene_rc, i + 1)
-    return out
-
-
 def summarize_matches(matches: Sequence[GenomeMatch]) -> Tuple[str, str, str, str]:
     if not matches:
         return "", "", "", "not_found"
     first = matches[0]
     status = "unique_match" if len(matches) == 1 else f"multiple_matches:{len(matches)}"
-    return first.contig_id, str(first.start_1based), str(first.end_1based), f"{first.strand};{status}"
-
-
-def import_primer3():
-    try:
-        import primer3  # type: ignore
-    except ImportError as exc:
-        raise SystemExit("primer3-py is required. Install it with: pip install primer3-py") from exc
-    return primer3
+    return first.contig_id, str(first.start_0based + 1), str(first.end_0based), f"{first.strand};{status}"
 
 
 def design_with_primer3(gene_seq: str, left_tail: str, right_tail: str, args: argparse.Namespace) -> Optional[PrimerDesignResult]:
@@ -404,8 +287,12 @@ def manual_fallback(gene_seq: str, left_tail: str, right_tail: str, args: argpar
 def main() -> int:
     args = parse_args()
     plasmid_id, plasmid_seq = load_single_sequence(args.plasmid)
-    genome_records = load_genome_records(args.genome)
+    genome_records, _ = load_genome_records(args.genome)
     genes = load_multi_fasta(args.genes)
+    genes = filter_genes_by_ids(genes, args.gene_ids)
+    if not genes:
+        print("Error: no genes to process after --gene-ids filter", file=sys.stderr)
+        return 1
 
     left_enzyme = get_enzyme(args.left_enzyme)
     right_enzyme = get_enzyme(args.right_enzyme)

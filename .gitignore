@@ -4,3 +4,4 @@
 *.gbk
 *.csv
 test_genes.fasta
+__pycache__/

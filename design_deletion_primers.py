@@ -27,24 +27,28 @@ from typing import List, Optional, Sequence, Tuple
 
 from tqdm import tqdm
 
-from Bio import Restriction, SeqIO
-from Bio.Seq import Seq
+from primer_utils import (
+    GenomeMatch,
+    calc_tm,
+    extract_downstream,
+    extract_upstream,
+    filter_genes_by_ids,
+    find_exact_matches,
+    get_enzyme,
+    enzyme_cut_positions_0based,
+    load_genome_records,
+    load_multi_fasta,
+    load_single_sequence,
+    rc,
+    select_cut,
+)
 
-DNA_ALPHABET = set("ACGTN")
 GENE_OVERLAP = 9   # bp kept from each end of the gene to preserve reading frame
 
 
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
-
-@dataclass
-class GenomeMatch:
-    contig_id: str
-    start_0based: int
-    end_0based: int
-    strand: str
-
 
 @dataclass
 class DeletionPrimerResult:
@@ -116,110 +120,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gc-clamp", type=int, default=1,
                    help="Minimum G/C bases at the 3' end of each primer (default: 1)")
     p.add_argument("--allow-unmatched-genes", action="store_true")
+    p.add_argument("--gene-ids", nargs="+", default=None,
+                   help="Only design primers for these gene IDs (filtered from --genes FASTA). "
+                        "Default: all genes.")
     return p.parse_args()
-
-
-# ---------------------------------------------------------------------------
-# Sequence utilities
-# ---------------------------------------------------------------------------
-
-def sanitize_dna(seq: str) -> str:
-    seq = seq.upper().replace("U", "T")
-    bad = sorted({c for c in seq if c not in DNA_ALPHABET})
-    if bad:
-        raise ValueError(f"Unsupported sequence characters: {''.join(bad)}")
-    return seq
-
-
-def rc(seq: str) -> str:
-    return str(Seq(seq).reverse_complement())
-
-
-# ---------------------------------------------------------------------------
-# File loading
-# ---------------------------------------------------------------------------
-
-def load_multi_fasta(path: str) -> List[Tuple[str, str]]:
-    out: List[Tuple[str, str]] = []
-    for record in SeqIO.parse(path, "fasta"):
-        out.append((record.id, sanitize_dna(str(record.seq))))
-    if not out:
-        raise ValueError(f"No FASTA records found in {path}")
-    return out
-
-
-def load_single_sequence(path: str) -> Tuple[str, str]:
-    records = list(SeqIO.parse(path, "fasta"))
-    if not records:
-        raise ValueError(f"No FASTA records found in {path}")
-    if len(records) == 1:
-        return records[0].id, sanitize_dna(str(records[0].seq))
-    combined = "".join(str(r.seq) for r in records)
-    return "combined_records", sanitize_dna(combined)
-
-
-def load_genome_records(paths: Sequence[str]) -> Tuple[List[Tuple[str, str]], dict]:
-    out: List[Tuple[str, str]] = []
-    contig_to_file: dict = {}
-    seen_ids: set = set()
-    for path in paths:
-        stem = Path(path).stem
-        for rec_id, seq in load_multi_fasta(path):
-            final_id = rec_id
-            if final_id in seen_ids:
-                final_id = f"{stem}:{rec_id}"
-            seen_ids.add(final_id)
-            out.append((final_id, seq))
-            contig_to_file[final_id] = stem
-    if not out:
-        raise ValueError("No genome FASTA records were loaded")
-    return out, contig_to_file
 
 
 # ---------------------------------------------------------------------------
 # Plasmid / enzyme helpers
 # ---------------------------------------------------------------------------
-
-def get_enzyme(name: str):
-    try:
-        return getattr(Restriction, name)
-    except AttributeError as exc:
-        raise ValueError(f"Unknown restriction enzyme: {name}") from exc
-
-
-def enzyme_cut_positions_0based(enzyme, seq: str, circular: bool) -> List[int]:
-    return sorted({int(hit) - 1 for hit in enzyme.search(Seq(seq), linear=not circular)})
-
-
-def select_cut(cuts: Sequence[int], idx: int, enzyme_name: str) -> int:
-    if not cuts:
-        raise ValueError(f"{enzyme_name} does not cut the plasmid")
-    if idx < 0 or idx >= len(cuts):
-        raise ValueError(f"{enzyme_name} cut index {idx} out of range ({len(cuts)} cut(s))")
-    return cuts[idx]
-
-
-def extract_upstream(seq: str, cut0: int, n: int, circular: bool) -> str:
-    if circular:
-        start = cut0 - n
-        if start < 0:
-            return seq[start:] + seq[:cut0]
-        return seq[start:cut0]
-    if cut0 < n:
-        raise ValueError("Not enough upstream sequence in linear plasmid for requested overlap")
-    return seq[cut0 - n:cut0]
-
-
-def extract_downstream(seq: str, cut0: int, n: int, circular: bool) -> str:
-    if circular:
-        end = cut0 + n
-        if end > len(seq):
-            return seq[cut0:] + seq[:end - len(seq)]
-        return seq[cut0:end]
-    if cut0 + n > len(seq):
-        raise ValueError("Not enough downstream sequence in linear plasmid for requested overlap")
-    return seq[cut0:cut0 + n]
-
 
 def build_vector_tails(plasmid_seq: str, left_enzyme, right_enzyme,
                        args: argparse.Namespace) -> Tuple[str, str]:
@@ -251,8 +160,8 @@ def build_vector_tails(plasmid_seq: str, left_enzyme, right_enzyme,
     # which is ovhg bases before the top-strand cut position.
     right_dn_start = right0 - max(0, right_enzyme.ovhg)
 
-    left_tail  = extract_upstream(plasmid_seq, left0, args.overlap_length, args.circular_plasmid)
-    right_raw  = extract_downstream(plasmid_seq, right_dn_start, args.overlap_length, args.circular_plasmid)
+    left_tail, _  = extract_upstream(plasmid_seq, left0, args.overlap_length, args.circular_plasmid)
+    right_raw, _  = extract_downstream(plasmid_seq, right_dn_start, args.overlap_length, args.circular_plasmid)
     right_tail = rc(right_raw)
     return left_tail, right_tail
 
@@ -260,30 +169,6 @@ def build_vector_tails(plasmid_seq: str, left_enzyme, right_enzyme,
 # ---------------------------------------------------------------------------
 # Genome search
 # ---------------------------------------------------------------------------
-
-def find_exact_matches(genome_records: Sequence[Tuple[str, str]], gene_seq: str) -> List[GenomeMatch]:
-    out: List[GenomeMatch] = []
-    gene_rc = rc(gene_seq)
-    is_palindrome = (gene_seq == gene_rc)
-    for contig_id, contig_seq in genome_records:
-        i = contig_seq.find(gene_seq)
-        while i != -1:
-            out.append(GenomeMatch(contig_id, i, i + len(gene_seq), "+"))
-            i = contig_seq.find(gene_seq, i + 1)
-        if not is_palindrome:
-            i = contig_seq.find(gene_rc)
-            while i != -1:
-                out.append(GenomeMatch(contig_id, i, i + len(gene_seq), "-"))
-                i = contig_seq.find(gene_rc, i + 1)
-    seen: set = set()
-    deduped: List[GenomeMatch] = []
-    for m in out:
-        key = (m.contig_id, m.start_0based, m.end_0based)
-        if key not in seen:
-            seen.add(key)
-            deduped.append(m)
-    return deduped
-
 
 def extract_context(
     genome_records: Sequence[Tuple[str, str]],
@@ -341,19 +226,6 @@ def extract_context(
 # ---------------------------------------------------------------------------
 # Primer design
 # ---------------------------------------------------------------------------
-
-def import_primer3():
-    try:
-        import primer3  # type: ignore
-    except ImportError as exc:
-        raise SystemExit("primer3-py is required. Install it with: pip install primer3-py") from exc
-    return primer3
-
-
-def calc_tm(seq: str, mv_conc: float) -> float:
-    primer3 = import_primer3()
-    return float(primer3.calc_tm(seq, mv_conc=mv_conc, dv_conc=0, dntp_conc=0))
-
 
 def best_primer(seq: str, from_end: bool, args: argparse.Namespace) -> str:
     """
@@ -464,6 +336,10 @@ def main() -> int:
 
     genome_records, contig_to_file = load_genome_records(args.genome)
     genes = load_multi_fasta(args.genes)
+    genes = filter_genes_by_ids(genes, args.gene_ids)
+    if not genes:
+        print("Error: no genes to process after --gene-ids filter", file=sys.stderr)
+        return 1
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)

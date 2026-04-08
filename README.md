@@ -59,6 +59,7 @@ python design_cloning_primers_2.0.py \
 | `--opt-tm` | 60.0 | Target Tm (°C) for the gene-binding region |
 | `--gc-clamp` | 1 | Minimum G/C bases required at the 3' end of each primer |
 | `--mv-conc` | 500.0 | Monovalent salt concentration (mM) used for Tm calculation |
+| `--gene-ids` | *(all)* | Space-separated list of gene IDs to process; see [Running on a subset of genes](#running-on-a-subset-of-genes) |
 
 ### Output columns
 
@@ -144,6 +145,7 @@ python design_deletion_primers.py \
 | `--opt-tm` | 60.0 | Target Tm (°C) for the gene-binding region |
 | `--gc-clamp` | 1 | Minimum G/C bases required at the 3' end of each primer |
 | `--mv-conc` | 500.0 | Monovalent salt concentration (mM) used for Tm calculation |
+| `--gene-ids` | *(all)* | Space-separated list of gene IDs to process; see [Running on a subset of genes](#running-on-a-subset-of-genes) |
 
 ### Output columns
 
@@ -168,3 +170,27 @@ python design_deletion_primers.py \
 - The left enzyme should be the one whose cut site is at the **upstream** end of the insert (the Primer A side). For pGP704sacB with NcoI + SacI, this is NcoI.
 - Sticky-end offsets are handled automatically so the extracted vector overlap matches what NEBuilder/HiFi assembly expects.
 - If a gene appears at multiple genomic locations, a `VERIFY_LOCUS` warning is added and the first match is used. Always confirm you are targeting the correct copy before ordering primers.
+
+---
+
+## Running on a subset of genes
+
+Both scripts accept `--gene-ids` to process only specific genes from the input FASTA instead of the entire file. Pass one or more gene IDs:
+
+```bash
+python design_deletion_primers.py \
+  --plasmid pGP704sacB.fasta \
+  --genome chr1.fasta chr2.fasta \
+  --genes genes.fasta \
+  --output vca0571_deletion.csv \
+  --left-enzyme NcoI --right-enzyme SacI \
+  --gene-ids VCA0571
+```
+
+Multiple IDs can be passed at once:
+
+```bash
+--gene-ids VCA0571 VCA0040 VC0012
+```
+
+If any requested IDs are not found in the FASTA, a warning is printed for each missing ID and the script continues with the IDs that were matched. If none are matched, the script exits with an error and does not write an output file.
