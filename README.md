@@ -1,7 +1,7 @@
-design_cloning_primers / design_deletion_primers
-=================================================
+design_cloning_primers / design_deletion_primers / design_protein_tag_primers
+==============================================================================
 
-Automated primer design for cloning and in-frame deletion of genes in *Vibrio cholerae*.
+Automated primer design for cloning, in-frame deletion, and C-terminal protein tagging of genes in *Vibrio cholerae*.
 
 ## Prerequisites
 
@@ -173,9 +173,123 @@ python design_deletion_primers.py \
 
 ---
 
+## Protein tag primers (`design_protein_tag_primers.py`)
+
+Designs six primers per gene across three PCR amplicons to build a C-terminal protein fusion, ready for HiFi assembly into a suicide vector.
+
+### What it does
+
+For each gene, three amplicons are designed and stitched together by HiFi/Gibson assembly:
+
+```
+Final assembled insert (top strand, 5' → 3'):
+  [vector_L] [upstream flank] [gene - stop] [tag = linker + protein] [downstream flank] [vector_R]
+```
+
+| Amplicon | Template | Primers |
+|----------|----------|---------|
+| **AB** | genome | AB_fwd + AB_rev — amplifies `upstream flank + gene (minus stop)` |
+| **LT** | tag plasmid | LT_fwd + LT_rev — amplifies the full `[linker + protein]` tag cassette |
+| **CD** | genome | CD_fwd + CD_rev — amplifies `downstream flank` |
+
+- AB_fwd and CD_rev carry 5' vector overlap tails (for HiFi assembly into the digested vector).
+- AB_rev has a 5' tail matching the start of the tag (so AB overlaps LT).
+- LT_fwd has a 5' tail matching the end of the gene (no stop), so the AB↔LT junction is `gene_no_stop[-jn:] + tag[:jn]`.
+- LT_rev has a 5' tail matching the start of the downstream flank.
+- CD_fwd has a 5' tail matching the end of the tag.
+- The tag sequence is expected to include its fusion linker at the 5' end, so the linker is reconstituted from the LT template rather than added via a primer tail.
+- Tails are lowercase; gene/tag-binding regions are uppercase in the output.
+- Tm values are reported for the binding region only.
+- Genes on the minus strand are handled by reverse-complementing the full context, so primer design is always in the gene-reading direction.
+
+### Example
+
+For insertion into pGP704sacB digested with NcoI and SacI, fusing `GGGGG_GFP` (5 × Gly linker + superfolder GFP) to each gene's C-terminus:
+
+```bash
+python design_protein_tag_primers.py \
+  --plasmid pGP704sacB.fasta \
+  --genome chr1.fasta chr2.fasta \
+  --genes genes.fasta \
+  --output tag_primers.csv \
+  --left-enzyme NcoI \
+  --right-enzyme SacI
+```
+
+To use a custom tag, supply a FASTA file containing the full `[linker + protein + stop]` sequence:
+
+```bash
+python design_protein_tag_primers.py \
+  --plasmid pGP704sacB.fasta \
+  --genome chr1.fasta chr2.fasta \
+  --genes genes.fasta \
+  --output tag_primers.csv \
+  --left-enzyme NcoI --right-enzyme SacI \
+  --tag my_linker_mCherry.fasta
+```
+
+### Key parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--tag` | `GGGGG_GFP` | Tag to fuse. Either a hardcoded tag name or a path to a FASTA file. The sequence must include any fusion linker at the 5' end and end with a stop codon. |
+| `--left-enzyme` | required | Enzyme at the upstream (AB_fwd) end of the insert |
+| `--right-enzyme` | required | Enzyme at the downstream (CD_rev) end of the insert |
+| `--flank-length` | 650 | Length (bp) of upstream and downstream genomic flank |
+| `--overlap-length` | 20 | Length (bp) of the vector overlap tail on AB_fwd and CD_rev |
+| `--junction-overlap` | 10 | Length (bp) contributed by each side to the AB↔LT and LT↔CD junction overlaps (total junction width is 2×) |
+| `--opt-tm` | 60.0 | Target Tm (°C) for the gene/tag-binding region |
+| `--gc-clamp` | 1 | Minimum G/C bases required at the 3' end of each primer |
+| `--mv-conc` | 500.0 | Monovalent salt concentration (mM) used for Tm calculation |
+| `--gene-ids` | *(all)* | Space-separated list of gene IDs to process; see [Running on a subset of genes](#running-on-a-subset-of-genes) |
+
+### Hardcoded tags
+
+| Name | Contents | Length |
+|------|----------|--------|
+| `GGGGG_GFP` | 5 × Gly linker + superfolder GFP + stop | 732 bp |
+
+Additional tags can be added to `HARDCODED_TAGS` in `design_protein_tag_primers.py`, or supplied per-run via `--tag path/to/tag.fasta`.
+
+### Output columns
+
+Each primer has a paired `*_name` / `*_5to3` column. Names follow the scheme:
+
+- **AB_fwd / AB_rev** → `AB-{gene}_fw` / `AB-{gene}_rev`
+- **LT_fwd / LT_rev** → `linker-{protein}_fw` / `linker-{protein}_rev`, where `{protein}` is the part of the tag name after the first `_` (e.g. `GGGGG_GFP` → `linker-GFP`)
+- **CD_fwd / CD_rev** → `CD-{gene}_fw` / `CD-{gene}_rev`
+
+| Column | Description |
+|--------|-------------|
+| `gene_id` | Gene identifier from the input FASTA |
+| `gene_length_bp` | Length of the gene sequence |
+| `tag_name` | Name of the tag used (from `--tag`) |
+| `primer_AB_fwd_*` | Fwd primer for the AB amplicon (vector tail + upstream flank binding) |
+| `primer_AB_rev_*` | Rev primer for the AB amplicon (junction tail + gene-end binding) |
+| `primer_LT_fwd_*` | Fwd primer for the LT amplicon (gene-end tail + tag binding) |
+| `primer_LT_rev_*` | Rev primer for the LT amplicon (junction tail + tag binding) |
+| `primer_CD_fwd_*` | Fwd primer for the CD amplicon (junction tail + downstream flank binding) |
+| `primer_CD_rev_*` | Rev primer for the CD amplicon (vector tail + downstream flank binding) |
+| `tm_AB_fwd_c` – `tm_CD_rev_c` | Tm of each binding region (°C) |
+| `avg_tm_c` | Average Tm across all six binding regions (°C) |
+| `flank_length_bp` | Flank length used for this gene |
+| `warnings` | Semicolon-separated warnings, including `VERIFY_LOCUS` if the gene appears at multiple genomic locations |
+| `genome_contig` | Contig where the gene was found |
+| `genome_start_1based` / `genome_end_1based` | Genomic coordinates of the gene |
+| `strand` | Strand of the gene (`+` or `-`) |
+
+### Notes
+
+- The tag FASTA (or hardcoded sequence) must already contain any fusion linker at the 5' end and must end with a stop codon. The script warns if the tag length is not a multiple of 3 or if it does not end with a stop codon.
+- The stop codon of each target gene is detected and trimmed automatically so the fusion stays in frame.
+- Sticky-end offsets are handled automatically for the vector overlap tails.
+- If a gene appears at multiple genomic locations, a `VERIFY_LOCUS` warning is added and the first match is used. Always confirm you are targeting the correct copy before ordering primers.
+
+---
+
 ## Running on a subset of genes
 
-Both scripts accept `--gene-ids` to process only specific genes from the input FASTA instead of the entire file. Pass one or more gene IDs:
+All three scripts accept `--gene-ids` to process only specific genes from the input FASTA instead of the entire file. Pass one or more gene IDs:
 
 ```bash
 python design_deletion_primers.py \
