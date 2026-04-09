@@ -1,5 +1,0 @@
-streamlit
-pandas
-biopython==1.83
-primer3-py
-tqdm

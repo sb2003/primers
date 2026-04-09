@@ -373,10 +373,9 @@ The output CSV has **one row per primer** (6 rows total), followed by a blank ro
 
 ## Web app
 
-Install the extra dependency and launch:
+From the `primers` environment, launch:
 
 ```bash
-pip install -r requirements.txt
 streamlit run app.py
 ```
 

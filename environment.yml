@@ -8,3 +8,6 @@ dependencies:
   - pip:
       - biopython==1.83
       - tqdm
+      - primer3-py
+      - pandas
+      - streamlit
