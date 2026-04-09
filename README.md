@@ -373,9 +373,10 @@ The output CSV has **one row per primer** (6 rows total), followed by a blank ro
 
 ## Web app
 
-From the `primers` environment, launch:
+Activate the environment and launch:
 
 ```bash
+conda activate primers
 streamlit run app.py
 ```
 
