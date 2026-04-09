@@ -711,12 +711,12 @@ with tab_tag:
     if tag_choice == "Custom":
         if terminus == "N":
             tag_fasta_file = st.file_uploader(
-                "Tag FASTA (required — must be [ATG + protein + linker] with no stop codon)",
+                "Tag + Linker FASTA (required — must be [ATG + protein + linker] with no stop codon)",
                 type=["fasta", "fa", "fna"], key="tag_fasta",
             )
         else:
             tag_fasta_file = st.file_uploader(
-                "Tag FASTA (required — must be [linker + protein + stop])",
+                "Linker + Tag FASTA (required — must be [linker + protein + stop])",
                 type=["fasta", "fa", "fna"], key="tag_fasta",
             )
 
