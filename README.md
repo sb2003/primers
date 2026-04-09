@@ -382,6 +382,8 @@ streamlit run app.py
 
 The app opens in your browser at `http://localhost:8501`.
 
+To stop the app, return to the terminal where it is running and press `Ctrl+C` (same on macOS, Linux, and Windows). Closing the browser tab alone does not stop the server.
+
 ---
 
 ## Running on a subset of genes
