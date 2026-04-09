@@ -643,7 +643,7 @@ with tab_tag:
     with st.expander(f"Genome and genes (default: {', '.join(DEFAULT_GENOME)} / {DEFAULT_GENES})"):
         genome_files = st.file_uploader("Genome FASTA(s) — upload to override", type=["fasta", "fa", "fna"], accept_multiple_files=True, key="tag_genome")
         genes_file = st.file_uploader("Genes FASTA — upload to override", type=["fasta", "fa", "fna"], key="tag_genes")
-    col1, col2, _spacer_plasmid = st.columns([1, 2, 4])
+    col1, col2, _spacer_plasmid = st.columns([1, 3, 4])
     with col1:
         plasmid_name = st.selectbox("Plasmid", LOCAL_PLASMIDS, format_func=lambda p: Path(p).stem, key="tag_plasmid_sel") if LOCAL_PLASMIDS else None
     with col2:
