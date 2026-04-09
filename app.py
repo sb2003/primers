@@ -672,9 +672,10 @@ with tab_tag:
     else:
         tag_options = ["Custom"]
 
+    tag_label = "Linker + Tag" if terminus == "C" else "Tag + Linker"
     col_tag, col_gene, _spacer_tag = st.columns([1, 1, 2])
     with col_tag:
-        tag_choice = st.selectbox("Tag", tag_options, key="tag_choice")
+        tag_choice = st.selectbox(tag_label, tag_options, key="tag_choice")
     with col_gene:
         gene_id = st.text_input("Gene ID (single, required)", value="", key="tag_gene_id")
 
