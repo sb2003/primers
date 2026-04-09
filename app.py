@@ -379,17 +379,17 @@ with tab_cloning:
     with col2:
         replace_arc = st.selectbox(
             "Replace arc",
-            ["three_to_five", "five_to_three"],
-            index=1,
+            ["shorter_arc", "longer_arc", "three_to_five", "five_to_three"],
+            index=0,
             disabled=(tail_mode != "plasmid_overlaps"),
             key="cloning_replace_arc",
             help=(
                 "For circular plasmids with two distinct cut sites, chooses which "
                 "arc between the cuts is replaced by the insert.\n\n"
-                "**three_to_five**: replace the arc going from the 3' enzyme cut to "
-                "the 5' enzyme cut.\n\n"
-                "**five_to_three**: replace the arc going from the 5' enzyme cut to "
-                "the 3' enzyme cut.\n\n"
+                "**shorter_arc** / **longer_arc**: pick by length (usually what you want — "
+                "shorter_arc replaces the small MCS fragment).\n\n"
+                "**three_to_five** / **five_to_three**: pick by direction regardless of "
+                "length (escape hatch for unusual cases).\n\n"
                 "Ignored for single-cut or linear plasmids."
             ),
         )

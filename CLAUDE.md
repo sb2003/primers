@@ -23,7 +23,6 @@ python design_cloning_primers_2.0.py \
   --three-prime-enzyme BamHI \
   --five-prime-enzyme BamHI \
   --tail-mode plasmid_overlaps \
-  --replace-arc five_to_three \
   --overlap-length 20 \
   --opt-primer-size 20 \
   --max-primer-size 22
