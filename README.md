@@ -1,5 +1,5 @@
-design_cloning_primers / design_deletion_primers / design_protein_tag_primers
-==============================================================================
+Primer Design Tools
+===================
 
 Automated primer design for cloning, in-frame deletion, and protein tagging of genes in *Vibrio cholerae*.
 
