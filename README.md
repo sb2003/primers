@@ -331,6 +331,7 @@ python design_protein_tag_primers.py \
 | Name | Terminus | Contents | Length |
 |------|----------|----------|--------|
 | `GGGGG_GFP` | C | 5 × Gly linker + superfolder GFP + stop | 732 bp |
+| `GGSS_Halo` | C | Gly-Gly-Ser-Ser linker + HaloTag® + stop | 906 bp |
 
 No N-terminal tags are hardcoded yet. Additional tags can be added to `HARDCODED_TAGS_C` / `HARDCODED_TAGS_N` in `design_protein_tag_primers.py`, or supplied per-run via `--tag path/to/tag.fasta`.
 
