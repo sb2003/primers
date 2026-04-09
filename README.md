@@ -1,7 +1,7 @@
 design_cloning_primers / design_deletion_primers / design_protein_tag_primers
 ==============================================================================
 
-Automated primer design for cloning, in-frame deletion, and C-terminal protein tagging of genes in *Vibrio cholerae*.
+Automated primer design for cloning, in-frame deletion, and protein tagging of genes in *Vibrio cholerae*.
 
 ## Prerequisites
 
@@ -20,7 +20,7 @@ conda activate primers
 
 - [Cloning primers](#cloning-primers-design_cloning_primers_20py) — amplify genes for insertion into a vector
 - [Deletion primers](#deletion-primers-design_deletion_primerspy) — four primers per gene for in-frame chromosomal deletion
-- [Protein tag primers](#protein-tag-primers-design_protein_tag_primerspy) — six primers to build a C-terminal protein fusion
+- [Protein tag primers](#protein-tag-primers-design_protein_tag_primerspy) — six primers to fuse a tag to a gene (N- or C-terminal)
 
 ---
 
