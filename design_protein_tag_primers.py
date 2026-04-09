@@ -1,31 +1,44 @@
 #!/usr/bin/env python3
 """
-Design primers for C-terminal protein tagging of genes.
+Design primers for N- or C-terminal protein tagging of genes.
 
-For each gene, six primers are designed across three PCR amplicons that are
-stitched together by HiFi/Gibson assembly into a suicide vector:
+Six primers are designed across three PCR amplicons (AB, LT, CD) that are
+stitched together by HiFi/Gibson assembly into a suicide vector. The templates
+and tag structure depend on which terminus is being tagged.
 
-  AB amplicon  = upstream flank + gene (minus stop codon)
-    AB_fwd — 5' tail = vector overlap at the left enzyme cut
-    AB_rev — 5' tail = junction overlap into the start of the tag
-
-  LT amplicon  = tag   (template = tag plasmid; the tag sequence includes any
-                        fusion linker at its 5' end, so the linker is
-                        reconstituted from the template rather than added via
-                        a primer tail)
-    LT_fwd — 5' tail = last few bp of gene (no stop)
-    LT_rev — 5' tail = junction overlap into the start of the downstream flank
-
-  CD amplicon  = downstream flank
-    CD_fwd — 5' tail = last few bp of the tag
-    CD_rev — 5' tail = vector overlap at the right enzyme cut
-
+C-terminal tagging (--terminus C, default)
+------------------------------------------
 Final assembled insert (top strand, 5' → 3'):
-    [vector_L] [upstream] [gene_no_stop] [tag = linker + protein] [downstream] [vector_R]
+    [vector_L] [upstream] [gene (no stop)] [tag = linker + protein + stop] [downstream] [vector_R]
 
-Each amplicon junction carries a 2 × junction_overlap bp overlap:
-    AB ↔ LT  :  gene_no_stop[-jn:] + tag[:jn]
-    LT ↔ CD  :  tag[-jn:]          + downstream[:jn]
+  AB amplicon  = upstream flank + gene (minus stop codon)   — template = genome
+  LT amplicon  = tag (linker + protein + stop)              — template = tag plasmid
+  CD amplicon  = downstream flank                           — template = genome
+
+The gene's stop codon is detected and trimmed so the reading frame continues
+into the tag; the tag carries the fusion's stop codon at its 3' end.
+
+N-terminal tagging (--terminus N)
+---------------------------------
+Final assembled insert (top strand, 5' → 3'):
+    [vector_L] [upstream] [tag = ATG + protein + linker] [gene (with stop)] [downstream] [vector_R]
+
+  AB amplicon  = upstream flank                             — template = genome
+  LT amplicon  = tag (ATG + protein + linker)               — template = tag plasmid
+  CD amplicon  = gene (with stop) + downstream flank        — template = genome
+
+The tag provides the fusion's start codon (ATG) at its 5' end and must NOT
+contain a stop codon — translation reads through the tag, through the linker,
+into the gene, and terminates at the gene's own stop codon.
+
+Shared junction logic
+---------------------
+Regardless of terminus, each amplicon junction carries a 2 × junction_overlap
+bp overlap built from matching primer tails:
+    AB ↔ LT  :  left_block[-jn:] + tag[:jn]
+    LT ↔ CD  :  tag[-jn:]        + right_block[:jn]
+
+where left_block and right_block depend on the terminus (see above).
 
 Tails are lowercase, gene/tag-binding regions are uppercase in the output.
 Tm values are reported for the binding region only.
@@ -60,14 +73,14 @@ from primer_utils import (
 # ---------------------------------------------------------------------------
 # Hardcoded tags
 # ---------------------------------------------------------------------------
-# Each tag sequence includes its fusion linker at the 5' end followed by the
-# protein coding sequence ending in a stop codon. The tag plasmid used as the
-# LT amplicon template is assumed to carry the full [linker + protein]
-# cassette, so the linker is reconstituted from the template rather than
-# being added via a primer tail. To use a different linker, supply a FASTA
-# file with the full [linker + protein] sequence via --tag.
+# C-terminal tags ([linker + protein + stop]) and N-terminal tags
+# ([ATG-protein-no-stop + linker]) are stored in separate dicts because they
+# have opposite structural requirements. The LT template is assumed to carry
+# the full cassette, so the linker is reconstituted from the template rather
+# than being added via a primer tail. To use a different linker, supply a
+# FASTA file with the full sequence via --tag.
 
-HARDCODED_TAGS: dict = {
+HARDCODED_TAGS_C: dict = {
     "GGGGG_GFP": (
         "GGAGGAGGAGGAGGA"  # 5 × Gly linker (15 bp)
         "ATGAGCAAAGGAGAAGAACTGTTCACCGGTGTTGTTCCGATCCTGGTTGAACTGGATGGT"
@@ -85,27 +98,36 @@ HARDCODED_TAGS: dict = {
     ),
 }
 
-DEFAULT_TAG = "GGGGG_GFP"
+# No N-terminal tags are hardcoded yet; supply one per-run via --tag path/to/tag.fasta.
+HARDCODED_TAGS_N: dict = {}
+
+DEFAULT_TAG_C = "GGGGG_GFP"
 
 
-def resolve_tag(tag_arg: str) -> Tuple[str, str]:
+def resolve_tag(tag_arg: str, terminus: str) -> Tuple[str, str]:
     """
     Resolve a --tag argument to (tag_name, tag_seq).
 
-    tag_arg is either a path to a FASTA file containing the tag sequence
-    (including any fusion linker at the 5' end) or the name of a hardcoded tag
-    (key in HARDCODED_TAGS). Files take precedence over hardcoded names if
-    both would match.
+    tag_arg is either a path to a FASTA file containing the tag sequence or
+    the name of a hardcoded tag. Hardcoded tags are looked up in the dict
+    that matches the selected terminus (C → HARDCODED_TAGS_C, N →
+    HARDCODED_TAGS_N). Files take precedence over hardcoded names if both
+    would match.
     """
     path = Path(tag_arg)
     if path.exists() and path.is_file():
         tag_id, tag_seq = load_single_sequence(tag_arg)
         return tag_id, tag_seq.upper()
-    if tag_arg in HARDCODED_TAGS:
-        return tag_arg, HARDCODED_TAGS[tag_arg].upper()
+    hardcoded = HARDCODED_TAGS_C if terminus == "C" else HARDCODED_TAGS_N
+    if tag_arg in hardcoded:
+        return tag_arg, hardcoded[tag_arg].upper()
+    if hardcoded:
+        known = f" (known: {', '.join(sorted(hardcoded.keys()))})"
+    else:
+        known = f" (no hardcoded {terminus}-terminal tags; supply a FASTA file)"
     raise SystemExit(
-        f"--tag '{tag_arg}': not an existing file and not a known hardcoded tag "
-        f"({', '.join(sorted(HARDCODED_TAGS.keys()))})"
+        f"--tag '{tag_arg}': not an existing file and not a known hardcoded "
+        f"{terminus}-terminal tag{known}"
     )
 
 
@@ -162,13 +184,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output", required=True,
                    help="Output CSV path")
     p.add_argument("--terminus", choices=["N", "C"], default="C",
-                   help="Which terminus to fuse the tag to. Default: C. "
-                        "N-terminal tagging is not yet implemented.")
-    p.add_argument("--tag", default=DEFAULT_TAG,
-                   help=f"Tag to fuse (including its fusion linker at the 5' end): "
-                        f"either a hardcoded tag name or a path to a FASTA file. "
-                        f"Hardcoded: {', '.join(sorted(HARDCODED_TAGS.keys()))}. "
-                        f"Default: {DEFAULT_TAG}")
+                   help="Which terminus to fuse the tag to (default: C). "
+                        "C-terminal tags must be [linker + protein + stop]; "
+                        "N-terminal tags must be [ATG-protein-no-stop + linker].")
+    p.add_argument("--tag", default=None,
+                   help=f"Tag to fuse: either a hardcoded tag name or a path to a "
+                        f"FASTA file. For --terminus C, defaults to {DEFAULT_TAG_C}. "
+                        f"For --terminus N, required (no hardcoded N-terminal tags). "
+                        f"Hardcoded C-terminal: {', '.join(sorted(HARDCODED_TAGS_C.keys()))}.")
 
     p.add_argument("--left-enzyme", required=True,
                    help="Enzyme at the upstream (AB_fwd) end of the insert")
@@ -241,65 +264,128 @@ def build_vector_tails(plasmid_seq: str, left_enzyme, right_enzyme,
 # Genome context extraction
 # ---------------------------------------------------------------------------
 
-def extract_tag_context(
+def _gene_oriented_slices(
     genome_records: Sequence[Tuple[str, str]],
     match: GenomeMatch,
     flank: int,
-) -> Tuple[str, str, str]:
+) -> Tuple[str, str, str, bool]:
     """
-    Return (left_block, right_block, edge_note) in gene-reading direction.
+    Return (upstream, gene_body, downstream, has_stop) in gene-reading direction.
 
-    left_block  = upstream flank + gene minus stop codon   (template for AB)
-    right_block = downstream flank                         (template for CD)
-
-    The stop codon is detected on the fly and trimmed if present; if the gene
-    match does not end with a stop codon an edge note is appended and the full
-    matched sequence is used as-is.
+    `gene_body` is the full matched gene sequence (including the stop codon if
+    present). Callers decide whether to trim the stop off — the C-terminal path
+    drops it, the N-terminal path keeps it.
     """
     contig_seq = next(seq for cid, seq in genome_records if cid == match.contig_id)
 
-    # Does the matched gene end with a stop codon (in gene-reading direction)?
     if match.strand == "+":
         last_codon = contig_seq[match.end_0based - 3 : match.end_0based].upper()
     else:
         last_codon = rc(contig_seq[match.start_0based : match.start_0based + 3]).upper()
     has_stop = last_codon in ("TAA", "TAG", "TGA")
-    stop_trim = 3 if has_stop else 0
 
     if match.strand == "+":
         up_start  = max(0, match.start_0based - flank)
-        up_seq    = contig_seq[up_start : match.start_0based]
-        gene_body = contig_seq[match.start_0based : match.end_0based - stop_trim]
+        upstream  = contig_seq[up_start : match.start_0based]
+        gene_body = contig_seq[match.start_0based : match.end_0based]
         dn_end    = min(len(contig_seq), match.end_0based + flank)
-        dn_seq    = contig_seq[match.end_0based : dn_end]
-        left_block  = up_seq + gene_body
-        right_block = dn_seq
+        downstream = contig_seq[match.end_0based : dn_end]
     else:
         # Minus-strand gene: flip everything into gene-reading direction.
-        #
-        #   genomic + strand:
-        #     [...][dn_raw | match.start..start+3 (rc of stop) | ...gene body (rc)... | rc of ATG | up_raw][...]
-        #
-        #   gene-reading direction (5' → 3' on the - strand):
-        #     upstream (rc of genomic dn_raw)  →  gene_no_stop (rc of genomic start+3..end)  →  downstream (rc of genomic up_raw)
-        up_end   = min(len(contig_seq), match.end_0based + flank)
-        up_raw   = contig_seq[match.end_0based : up_end]
-        gene_raw = contig_seq[match.start_0based + stop_trim : match.end_0based]
-        dn_start = max(0, match.start_0based - flank)
-        dn_raw   = contig_seq[dn_start : match.start_0based]
-        left_block  = rc(up_raw) + rc(gene_raw)
-        right_block = rc(dn_raw)
+        up_end    = min(len(contig_seq), match.end_0based + flank)
+        up_raw    = contig_seq[match.end_0based : up_end]
+        gene_raw  = contig_seq[match.start_0based : match.end_0based]
+        dn_start  = max(0, match.start_0based - flank)
+        dn_raw    = contig_seq[dn_start : match.start_0based]
+        upstream   = rc(up_raw)
+        gene_body  = rc(gene_raw)
+        downstream = rc(dn_raw)
 
-    gene_body_len = (match.end_0based - match.start_0based) - stop_trim
-    actual_up_len = len(left_block) - gene_body_len
-    actual_dn_len = len(right_block)
+    return upstream, gene_body, downstream, has_stop
+
+
+def _edge_notes(upstream: str, downstream: str, flank: int) -> List[str]:
     notes: List[str] = []
-    if actual_up_len < flank:
-        notes.append(f"truncated upstream to {actual_up_len} bp (contig edge)")
-    if actual_dn_len < flank:
-        notes.append(f"truncated downstream to {actual_dn_len} bp (contig edge)")
+    if len(upstream) < flank:
+        notes.append(f"truncated upstream to {len(upstream)} bp (contig edge)")
+    if len(downstream) < flank:
+        notes.append(f"truncated downstream to {len(downstream)} bp (contig edge)")
+    return notes
+
+
+def extract_c_tag_context(
+    genome_records: Sequence[Tuple[str, str]],
+    match: GenomeMatch,
+    flank: int,
+) -> Tuple[str, str, str]:
+    """
+    C-terminal: return (left_block, right_block, edge_note).
+
+    left_block  = upstream flank + gene (minus stop)   (template for AB)
+    right_block = downstream flank                     (template for CD)
+
+    The stop codon is detected and trimmed if present. Warns if:
+    - the gene does not start with a recognised start codon (ATG/GTG/TTG),
+      since the gene provides the fusion's start codon in C-terminal mode
+    - the gene contains in-frame stop codons before its own terminal stop,
+      which would truncate the fusion before it reaches the tag
+    - the gene does not end with a stop codon
+    """
+    upstream, gene_body, downstream, has_stop = _gene_oriented_slices(
+        genome_records, match, flank
+    )
+    gene_no_stop = gene_body[:-3] if has_stop else gene_body
+    left_block  = upstream + gene_no_stop
+    right_block = downstream
+
+    notes = _edge_notes(upstream, downstream, flank)
+
+    # The gene provides the start codon and reading frame for the fusion, so
+    # it must start with a valid start codon and have no premature stops.
+    start_codon = gene_body[:3].upper()
+    if start_codon not in ("ATG", "GTG", "TTG"):
+        notes.append(
+            f"gene does not start with a recognised start codon (starts with {start_codon})"
+        )
+    premature_stops = [
+        i for i in range(0, len(gene_no_stop) - 2, 3)
+        if gene_no_stop[i:i+3].upper() in ("TAA", "TAG", "TGA")
+    ]
+    if premature_stops:
+        notes.append(
+            f"gene contains {len(premature_stops)} in-frame stop codon(s) before the end "
+            f"— fusion will terminate prematurely"
+        )
     if not has_stop:
         notes.append("gene does not end with a stop codon in the genome; used full matched length")
+    return left_block, right_block, ";".join(notes)
+
+
+def extract_n_tag_context(
+    genome_records: Sequence[Tuple[str, str]],
+    match: GenomeMatch,
+    flank: int,
+) -> Tuple[str, str, str]:
+    """
+    N-terminal: return (left_block, right_block, edge_note).
+
+    left_block  = upstream flank                       (template for AB)
+    right_block = gene (with stop) + downstream flank  (template for CD)
+
+    The gene must carry its own stop codon — the tag does not supply one. A
+    warning note is appended if the matched gene does not end with a stop.
+    """
+    upstream, gene_body, downstream, has_stop = _gene_oriented_slices(
+        genome_records, match, flank
+    )
+    left_block  = upstream
+    right_block = gene_body + downstream
+
+    notes = _edge_notes(upstream, downstream, flank)
+    if not has_stop:
+        notes.append(
+            "gene does not end with a stop codon — N-terminal fusion will have no stop"
+        )
     return left_block, right_block, ";".join(notes)
 
 
@@ -354,23 +440,27 @@ def design_tag_primers(
     """
     Design the 6 primers across the AB, LT and CD amplicons.
 
-    The tag sequence already includes its fusion linker at the 5' end, so the
-    linker is part of the LT template and does not need to ride on a primer
-    tail.
+    This function is terminus-agnostic — the caller passes the correct
+    left_block and right_block for the selected terminus:
+
+        C-terminal: left_block  = upstream + gene_no_stop
+                    right_block = downstream
+        N-terminal: left_block  = upstream
+                    right_block = gene_with_stop + downstream
 
     Junction tails (jn = --junction-overlap, default 10):
 
-        tail_AB_rev = rc(tag[:jn])          (first jn bp of the tag = linker start)
-        tail_LT_fwd = left_block[-jn:]      (last jn bp of gene, no stop)
-        tail_LT_rev = rc(right_block[:jn])
-        tail_CD_fwd = tag[-jn:]
+        tail_AB_rev = rc(tag[:jn])          (first jn bp of the tag)
+        tail_LT_fwd = left_block[-jn:]      (last jn bp of left_block)
+        tail_LT_rev = rc(right_block[:jn])  (first jn bp of right_block)
+        tail_CD_fwd = tag[-jn:]             (last jn bp of the tag)
 
     Each junction is then 2*jn bp wide:
-        AB last 2*jn bp  = gene_no_stop[-jn:] + tag[:jn]
-        LT first 2*jn bp = gene_no_stop[-jn:] + tag[:jn]   ← matches AB
+        AB last 2*jn bp  = left_block[-jn:] + tag[:jn]
+        LT first 2*jn bp = left_block[-jn:] + tag[:jn]      ← matches AB
 
-        LT last 2*jn bp  = tag[-jn:] + downstream[:jn]
-        CD first 2*jn bp = tag[-jn:] + downstream[:jn]     ← matches LT
+        LT last 2*jn bp  = tag[-jn:] + right_block[:jn]
+        CD first 2*jn bp = tag[-jn:] + right_block[:jn]     ← matches LT
     """
     jn = args.junction_overlap
 
@@ -424,29 +514,89 @@ def design_tag_primers(
 # Startup sanity checks for the tag
 # ---------------------------------------------------------------------------
 
-def check_tag_constants(tag_name: str, tag_seq: str) -> None:
-    print(f"Tag: {tag_name} ({len(tag_seq)} bp)", file=sys.stderr)
+def check_tag_constants(tag_name: str, tag_seq: str, terminus: str) -> None:
+    print(f"Tag: {tag_name} ({len(tag_seq)} bp, {terminus}-terminal)", file=sys.stderr)
     if len(tag_seq) % 3 != 0:
         print(
             f"WARNING: {tag_name} is {len(tag_seq)} bp, which is NOT a multiple of 3.",
             file=sys.stderr,
         )
-    if tag_seq[-3:].upper() not in ("TAA", "TAG", "TGA"):
-        print(
-            f"WARNING: {tag_name} does not end with a stop codon.",
-            file=sys.stderr,
-        )
+
+    first_codon = tag_seq[:3].upper()
+    last_codon  = tag_seq[-3:].upper()
+    stops = ("TAA", "TAG", "TGA")
+
+    if terminus == "C":
+        # C-terminal tag = [linker + protein + stop]: must end with a stop
+        # codon, and that stop must be the ONLY in-frame stop — anything
+        # earlier would terminate the fusion before the full tag is translated.
+        if last_codon not in stops:
+            print(
+                f"WARNING: C-terminal tag {tag_name} does not end with a stop codon.",
+                file=sys.stderr,
+            )
+        elif len(tag_seq) % 3 == 0:
+            premature_stops = [
+                i for i in range(0, len(tag_seq) - 3, 3)
+                if tag_seq[i:i+3].upper() in stops
+            ]
+            if premature_stops:
+                print(
+                    f"WARNING: C-terminal tag {tag_name} contains {len(premature_stops)} "
+                    f"in-frame stop codon(s) before the terminal stop — fusion will "
+                    f"terminate prematurely.",
+                    file=sys.stderr,
+                )
+    else:
+        # N-terminal tag = [ATG-protein + linker]: must start with ATG and must
+        # NOT contain a stop codon anywhere — translation reads through the tag
+        # into the gene and terminates at the gene's own stop.
+        if first_codon != "ATG":
+            print(
+                f"WARNING: N-terminal tag {tag_name} does not start with ATG "
+                f"(starts with {first_codon}).",
+                file=sys.stderr,
+            )
+        if len(tag_seq) % 3 == 0:
+            in_frame_stops = [
+                i for i in range(0, len(tag_seq), 3)
+                if tag_seq[i:i+3].upper() in stops
+            ]
+            if in_frame_stops:
+                print(
+                    f"WARNING: N-terminal tag {tag_name} contains {len(in_frame_stops)} "
+                    f"in-frame stop codon(s) — fusion will terminate inside the tag.",
+                    file=sys.stderr,
+                )
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Tag fusion orchestration
 # ---------------------------------------------------------------------------
 
-def design_c_terminal(
+def _protein_name_from_tag(tag_name: str, terminus: str) -> str:
+    """
+    Extract the protein portion of a tag name for LT primer labels.
+
+    C-terminal tag names are `[linker]_[protein]` (e.g. "GGGGG_GFP" → "GFP"),
+    so we take the part after the first underscore. N-terminal tag names are
+    `[protein]_[linker]` (e.g. "GFP_GGGGG" → "GFP"), so we take the part
+    before the last underscore. If there is no underscore, the whole tag name
+    is used.
+    """
+    if "_" not in tag_name:
+        return tag_name
+    if terminus == "C":
+        return tag_name.partition("_")[2]
+    return tag_name.rpartition("_")[0]
+
+
+def design_tag_fusion(
     gene_id: str,
     gene_seq: str,
     tag_name: str,
     tag_seq: str,
+    terminus: str,
     genome_records: Sequence[Tuple[str, str]],
     contig_to_file: dict,
     vector_left_tail: str,
@@ -454,7 +604,7 @@ def design_c_terminal(
     args: argparse.Namespace,
 ) -> Tuple[List[Tuple[str, str, Optional[float]]], Tuple, List[str]]:
     """
-    Design the 6 primers for a C-terminal protein fusion.
+    Design the 6 primers for an N- or C-terminal protein fusion.
 
     Returns (primers, match_info, warnings) where:
         primers    = list of (name, full_sequence, tm) tuples
@@ -462,12 +612,7 @@ def design_c_terminal(
         warnings   = list of warning strings
     """
     warnings: List[str] = []
-
-    # For a tag_name like "GGGGG_GFP", the LT primers are labelled
-    # "linker-GFP_{fw,rev}" to match the reference SnapGene scheme. If the tag
-    # name has no underscore, use the whole name as the protein part.
-    _, _, protein_part = tag_name.partition("_")
-    protein_part = protein_part or tag_name
+    protein_part = _protein_name_from_tag(tag_name, terminus)
 
     name_ab_fwd = f"AB-{gene_id}_fw"
     name_ab_rev = f"AB-{gene_id}_rev"
@@ -506,7 +651,8 @@ def design_c_terminal(
         )
 
     match = matches[0]
-    left_block, right_block, edge_note = extract_tag_context(
+    extract_fn = extract_c_tag_context if terminus == "C" else extract_n_tag_context
+    left_block, right_block, edge_note = extract_fn(
         genome_records, match, args.flank_length
     )
     if edge_note:
@@ -536,10 +682,24 @@ def design_c_terminal(
     return primers, match_info, warnings
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main() -> int:
     args = parse_args()
-    tag_name, tag_seq = resolve_tag(args.tag)
-    check_tag_constants(tag_name, tag_seq)
+    if args.tag is None:
+        if args.terminus == "C":
+            args.tag = DEFAULT_TAG_C
+        else:
+            print(
+                "Error: --tag is required for --terminus N (no hardcoded N-terminal tags). "
+                "Supply a FASTA file containing [ATG + protein + linker] with no stop codon.",
+                file=sys.stderr,
+            )
+            return 1
+    tag_name, tag_seq = resolve_tag(args.tag, args.terminus)
+    check_tag_constants(tag_name, tag_seq, args.terminus)
 
     _plasmid_id, plasmid_seq = load_single_sequence(args.plasmid)
     left_enzyme  = get_enzyme(args.left_enzyme)
@@ -563,19 +723,12 @@ def main() -> int:
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if args.terminus == "C":
-        primers, match_info, warnings = design_c_terminal(
-            gene_id, gene_seq, tag_name, tag_seq,
-            genome_records, contig_to_file,
-            vector_left_tail, vector_right_tail,
-            args,
-        )
-    else:  # N
-        print(
-            "Error: N-terminal tagging is not yet implemented.",
-            file=sys.stderr,
-        )
-        return 1
+    primers, match_info, warnings = design_tag_fusion(
+        gene_id, gene_seq, tag_name, tag_seq, args.terminus,
+        genome_records, contig_to_file,
+        vector_left_tail, vector_right_tail,
+        args,
+    )
 
     with out_path.open("w", newline="") as fh:
         writer = csv.writer(fh)

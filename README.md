@@ -181,36 +181,96 @@ python design_deletion_primers.py \
 
 ## Protein tag primers (`design_protein_tag_primers.py`)
 
-Designs six primers across three PCR amplicons to build a C-terminal protein fusion for a single gene, ready for HiFi assembly into a suicide vector. This script processes **one gene at a time** — pass the target gene via `--gene-ids`.
+Designs six primers across three PCR amplicons to fuse a tag to either the **N- or C-terminus** of a gene, ready for HiFi assembly into a suicide vector. This script processes **one gene at a time** — pass the target gene via `--gene-ids` and select the terminus with `--terminus {N,C}` (default: `C`).
 
 ### What it does
 
-Three amplicons are designed and stitched together by HiFi/Gibson assembly:
+Three amplicons (AB, LT, CD) are designed and stitched together by HiFi/Gibson assembly. The templates and tag structure depend on the chosen terminus.
+
+**C-terminal tagging (`--terminus C`, default)**
+
+Tag structure: `[linker][protein][stop]`. The linker sits at the 5' end of the tag so that when translation leaves the gene it passes through the linker into the protein and terminates at the tag's stop codon.
 
 ```
 Final assembled insert (top strand, 5' → 3'):
-  [vector_L] [upstream flank] [gene - stop] [tag = linker + protein] [downstream flank] [vector_R]
+  [vector_L] [upstream flank] [gene - stop] [linker] [protein] [stop] [downstream flank] [vector_R]
+                                            └───────── tag ─────────┘
+
+Fusion protein (N → C):
+  Met(gene) - ... - last gene residue - linker - protein - STOP
 ```
 
 | Amplicon | Template | Primers |
 |----------|----------|---------|
 | **AB** | genome | AB_fwd + AB_rev — amplifies `upstream flank + gene (minus stop)` |
-| **LT** | tag plasmid | LT_fwd + LT_rev — amplifies the full `[linker + protein]` tag cassette |
+| **LT** | tag plasmid | LT_fwd + LT_rev — amplifies the full `[linker + protein + stop]` tag cassette |
 | **CD** | genome | CD_fwd + CD_rev — amplifies `downstream flank` |
+
+The gene's stop codon is detected and trimmed so the reading frame continues into the tag; the tag carries the fusion's stop codon at its 3' end.
+
+**N-terminal tagging (`--terminus N`)**
+
+Tag structure: `[ATG][protein][linker]`. The linker sits at the 3' end of the tag so that when translation leaves the protein it passes through the linker into the gene, and terminates at the gene's own stop codon.
+
+```
+Final assembled insert (top strand, 5' → 3'):
+  [vector_L] [upstream flank] [ATG] [protein] [linker] [gene with stop] [downstream flank] [vector_R]
+                              └────── tag ──────────┘
+
+Fusion protein (N → C):
+  Met(tag) - protein - linker - Met(gene) - ... - last gene residue - STOP(gene)
+```
+
+| Amplicon | Template | Primers |
+|----------|----------|---------|
+| **AB** | genome | AB_fwd + AB_rev — amplifies `upstream flank` |
+| **LT** | tag plasmid | LT_fwd + LT_rev — amplifies the full `[ATG + protein + linker]` tag cassette |
+| **CD** | genome | CD_fwd + CD_rev — amplifies `gene (with stop) + downstream flank` |
+
+The tag provides the fusion's start codon at its 5' end and must **not** contain any stop codon. Translation reads through the tag, through the linker, into the gene (including the gene's own native Met residue), and terminates at the gene's stop codon.
+
+**Shared primer structure**
 
 - AB_fwd and CD_rev carry 5' vector overlap tails (for HiFi assembly into the digested vector).
 - AB_rev has a 5' tail matching the start of the tag (so AB overlaps LT).
-- LT_fwd has a 5' tail matching the end of the gene (no stop), so the AB↔LT junction is `gene_no_stop[-jn:] + tag[:jn]`.
-- LT_rev has a 5' tail matching the start of the downstream flank.
+- LT_fwd has a 5' tail matching the end of the AB amplicon, so the AB↔LT junction is `left_block[-jn:] + tag[:jn]`.
+- LT_rev has a 5' tail matching the start of the CD amplicon.
 - CD_fwd has a 5' tail matching the end of the tag.
-- The tag sequence is expected to include its fusion linker at the 5' end, so the linker is reconstituted from the LT template rather than added via a primer tail.
+- The tag sequence is expected to already include its fusion linker — at the 5' end (before the protein) for C-terminal tags, at the 3' end (after the protein) for N-terminal tags — so the linker is reconstituted from the LT template rather than added via a primer tail.
 - Tails are lowercase; gene/tag-binding regions are uppercase in the output.
 - Tm values are reported for the binding region only.
 - Genes on the minus strand are handled by reverse-complementing the full context, so primer design is always in the gene-reading direction.
 
-### Example
+### Validation checks
 
-For insertion into pGP704sacB digested with NcoI and SacI, fusing `GGGGG_GFP` (5 × Gly linker + superfolder GFP) to the C-terminus of VC1152:
+On startup the script validates both the tag and the target gene and prints warnings to stderr (non-fatal — primer design still proceeds). All warnings are also captured in the CSV `warnings` column.
+
+**Tag checks** (both terminus modes):
+- Warns if the tag length is not a multiple of 3.
+
+**C-terminal tag checks**:
+- Warns if the tag does not end with a stop codon (`TAA`/`TAG`/`TGA`).
+- Warns if the tag contains any in-frame stop codon *before* the terminal stop — the terminal stop must be the only one, otherwise the fusion truncates before the full tag is translated.
+
+**N-terminal tag checks**:
+- Warns if the tag does not start with `ATG` (the tag provides the fusion's start codon).
+- Warns if the tag contains *any* in-frame stop codon anywhere — N-terminal tags must read through into the gene.
+
+**C-terminal gene checks**:
+- Warns if the gene does not start with a recognised bacterial start codon (`ATG`/`GTG`/`TTG`). The C-terminal fusion uses the gene's own start codon.
+- Warns if the gene contains any in-frame stop codon before its terminal stop — a premature stop would truncate the fusion before it reaches the tag.
+- Warns if the gene does not end with a stop codon in the genome (the stop would normally be detected and trimmed; if missing, the full matched sequence is used as-is).
+
+**N-terminal gene checks**:
+- Warns if the gene does not end with a stop codon — N-terminal fusions terminate at the gene's native stop (the tag does not supply one).
+
+**Other checks** (both modes):
+- Warns if upstream or downstream flanks are truncated because the gene sits near a contig edge.
+- Warns with `VERIFY_LOCUS` if the gene matches at multiple genomic locations. The first match is used for primer design — confirm you are targeting the correct copy before ordering.
+
+### Examples
+
+For insertion into pGP704sacB digested with NcoI and SacI, fusing `GGGGG_GFP` (5 × Gly linker + superfolder GFP) to the **C-terminus** of VC1152:
 
 ```bash
 python design_protein_tag_primers.py \
@@ -223,7 +283,21 @@ python design_protein_tag_primers.py \
   --gene-ids VC1152
 ```
 
-To use a custom tag, supply a FASTA file containing the full `[linker + protein + stop]` sequence:
+For N-terminal tagging there are no hardcoded tags — supply your own via `--tag`. The file must contain `[ATG + protein + linker]` with no stop codon. Fusing a custom tag to the **N-terminus** of VC1152:
+
+```bash
+python design_protein_tag_primers.py \
+  --plasmid pGP704sacB.fasta \
+  --genome chr1.fasta chr2.fasta \
+  --genes genes.fasta \
+  --output vc1152_tag_primers.csv \
+  --left-enzyme NcoI --right-enzyme SacI \
+  --terminus N \
+  --tag my_GFP_linker.fasta \
+  --gene-ids VC1152
+```
+
+To use a custom C-terminal tag, supply a FASTA file containing `[linker + protein + stop]`:
 
 ```bash
 python design_protein_tag_primers.py \
@@ -240,7 +314,8 @@ python design_protein_tag_primers.py \
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `--tag` | `GGGGG_GFP` | Tag to fuse. Either a hardcoded tag name or a path to a FASTA file. The sequence must include any fusion linker at the 5' end and end with a stop codon. |
+| `--terminus` | `C` | Which terminus to fuse the tag to (`N` or `C`). |
+| `--tag` | `GGGGG_GFP` (C only) | Tag to fuse. Either a hardcoded tag name or a path to a FASTA file. C-terminal tags must be `[linker + protein + stop]`; N-terminal tags must be `[ATG + protein + linker]` with no stop codon. **Required for `--terminus N`** — no N-terminal tags are hardcoded. |
 | `--left-enzyme` | required | Enzyme at the upstream (AB_fwd) end of the insert |
 | `--right-enzyme` | required | Enzyme at the downstream (CD_rev) end of the insert |
 | `--flank-length` | 650 | Length (bp) of upstream and downstream genomic flank |
@@ -253,11 +328,11 @@ python design_protein_tag_primers.py \
 
 ### Hardcoded tags
 
-| Name | Contents | Length |
-|------|----------|--------|
-| `GGGGG_GFP` | 5 × Gly linker + superfolder GFP + stop | 732 bp |
+| Name | Terminus | Contents | Length |
+|------|----------|----------|--------|
+| `GGGGG_GFP` | C | 5 × Gly linker + superfolder GFP + stop | 732 bp |
 
-Additional tags can be added to `HARDCODED_TAGS` in `design_protein_tag_primers.py`, or supplied per-run via `--tag path/to/tag.fasta`.
+No N-terminal tags are hardcoded yet. Additional tags can be added to `HARDCODED_TAGS_C` / `HARDCODED_TAGS_N` in `design_protein_tag_primers.py`, or supplied per-run via `--tag path/to/tag.fasta`.
 
 ### Output format
 
@@ -284,8 +359,9 @@ The output CSV has **one row per primer** (6 rows total), followed by a blank ro
 
 ### Notes
 
-- The tag FASTA (or hardcoded sequence) must already contain any fusion linker at the 5' end and must end with a stop codon. The script warns if the tag length is not a multiple of 3 or if it does not end with a stop codon.
-- The stop codon of each target gene is detected and trimmed automatically so the fusion stays in frame.
+- The tag FASTA (or hardcoded sequence) must already contain its fusion linker — at the 5' end for C-terminal tags, at the 3' end for N-terminal tags. See **Validation checks** above for the full list of structural requirements.
+- For C-terminal tagging, the gene's stop codon is detected and trimmed automatically so the fusion reads through into the tag. If the input gene sequence already has its stop trimmed, it is used as-is (no blind 3 bp chop).
+- For N-terminal tagging, the gene's own start codon is kept — the fusion protein has a Met residue from the tag, the protein body, the linker, and then the gene's native Met as an internal residue before the rest of the gene.
 - Sticky-end offsets are handled automatically for the vector overlap tails.
 - If a gene appears at multiple genomic locations, a `VERIFY_LOCUS` warning is added and the first match is used. Always confirm you are targeting the correct copy before ordering primers.
 
