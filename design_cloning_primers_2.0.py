@@ -339,8 +339,9 @@ def main() -> int:
             "avg_tm_c",
             "forward_tm_c",
             "reverse_tm_c",
-            "pair_penalty",
             "warnings",
+            "design_method",
+            "pair_penalty",
             "",
             "",
             "genome_contig",
@@ -369,8 +370,8 @@ def main() -> int:
 
                 design = design_with_primer3(gene_seq, forward_tail, reverse_tail, args)
                 if design is None:
-                    warnings.append("primer3_failed_using_manual_fallback")
                     design = manual_fallback(gene_seq, forward_tail, reverse_tail, args)
+                design_method = "primer3" if design.method == "primer3_forced_ends" else "manual_end_extension"
 
                 writer.writerow([
                     gene_id,
@@ -380,8 +381,9 @@ def main() -> int:
                     round((design.forward_tm + design.reverse_tm) / 2, 1),
                     round(design.forward_tm, 1),
                     round(design.reverse_tm, 1),
-                    "" if design.pair_penalty is None else round(design.pair_penalty, 3),
                     ";".join(warnings),
+                    design_method,
+                    "" if design.pair_penalty is None else round(design.pair_penalty, 3),
                     "",
                     "",
                     contig_to_file.get(contig_id, contig_id),

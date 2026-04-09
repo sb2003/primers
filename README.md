@@ -84,14 +84,15 @@ Enzymes are labeled using the NEBuilder convention — the `--three-prime-enzyme
 | `avg_tm_c` | Average Tm of forward and reverse binding regions (°C) |
 | `forward_tm_c` | Tm of the forward binding region (°C) |
 | `reverse_tm_c` | Tm of the reverse binding region (°C) |
-| `pair_penalty` | Primer3 pair penalty score (lower is better; blank if fallback was used) |
-| `warnings` | Semicolon-separated warnings (e.g. multiple genome matches, fallback used) |
+| `warnings` | Semicolon-separated warnings (e.g. `gene_not_found_exactly_in_genome`, `multiple_matches:N`) |
+| `design_method` | `primer3` if primer3 returned a GC-clamped pair directly; `manual_end_extension` if the manual fallback was used (see notes) |
+| `pair_penalty` | Primer3 pair penalty score (lower is better; blank if the manual fallback was used) |
 
 ### Notes
 
 - Tm values are for the gene-binding region only, not the full tailed primer.
 - If a gene is not found exactly in the genome, use `--allow-unmatched-genes` to still design primers from the provided sequence.
-- If primer3 cannot satisfy the GC clamp within the size range, the search extends by up to 10 bp. If no GC-clamped primer is found, the best available primer is used with a warning.
+- If primer3 cannot satisfy the GC clamp within the size range, the search extends by up to 10 bp via a manual end scan (`design_method = manual_end_extension`). This is routine — about 71% of genes take this path because primer3 often returns a pair that doesn't end in G/C.
 
 ---
 
