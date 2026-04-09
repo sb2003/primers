@@ -422,7 +422,7 @@ def design_tag_primers(
 # ---------------------------------------------------------------------------
 
 def check_tag_constants(tag_name: str, tag_seq: str) -> None:
-    print(f"Tag: {tag_name} ({len(tag_seq)} bp, includes fusion linker)", file=sys.stderr)
+    print(f"Tag: {tag_name} ({len(tag_seq)} bp)", file=sys.stderr)
     if len(tag_seq) % 3 != 0:
         print(
             f"WARNING: {tag_name} is {len(tag_seq)} bp, which is NOT a multiple of 3.",
