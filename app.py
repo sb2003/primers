@@ -396,7 +396,13 @@ with tab_cloning:
 
     col1, _spacer = st.columns([1, 3])
     with col1:
-        overlap_length = st.number_input("Overlap length (bp)", value=20, min_value=0, key="cloning_overlap")
+        overlap_length = st.number_input(
+            "Overlap length (bp)",
+            value=20,
+            min_value=0,
+            key="cloning_overlap",
+            help="Length of the 5' plasmid overlap tail added to each primer (for HiFi assembly into the vector).",
+        )
 
     col1, _spacer = st.columns([2, 2])
     with col1:
@@ -545,7 +551,13 @@ with tab_deletion:
 
     col1, col2, col3, _spacer = st.columns([1, 1, 1.3, 3.7])
     with col1:
-        overlap_length = st.number_input("Vector overlap (bp)", value=20, min_value=0, key="deletion_overlap")
+        overlap_length = st.number_input(
+            "Vector overlap (bp)",
+            value=20,
+            min_value=0,
+            key="deletion_overlap",
+            help="Length of the vector overlap tail prepended to Primers A and D (for HiFi assembly into the digested vector).",
+        )
     with col2:
         junction_overlap = st.number_input("Junction overlap (bp)", value=10, min_value=0, key="deletion_junction")
     with col3:
@@ -704,11 +716,24 @@ with tab_tag:
 
     col1, col2, col3, _spacer_bottom = st.columns([1, 1, 1, 4])
     with col1:
-        overlap_length = st.number_input("Vector overlap (bp)", value=20, min_value=0, key="tag_overlap")
+        overlap_length = st.number_input(
+            "Vector overlap (bp)",
+            value=20,
+            min_value=0,
+            key="tag_overlap",
+            help="Length of the vector overlap tail prepended to AB_fwd and CD_rev (for HiFi assembly into the digested vector).",
+        )
     with col2:
         junction_overlap = st.number_input("Junction overlap (bp)", value=10, min_value=0, key="tag_junction")
     with col3:
-        flank_length = st.number_input("Flank length (bp)", value=650, min_value=1, step=50, key="tag_flank")
+        flank_length = st.number_input(
+            "Flank length (bp)",
+            value=650,
+            min_value=1,
+            step=50,
+            key="tag_flank",
+            help="Length of the upstream and downstream genomic flanks amplified alongside the gene for HiFi assembly.",
+        )
 
     with st.expander("Advanced parameters"):
         col1, col2, col3 = st.columns(3)
