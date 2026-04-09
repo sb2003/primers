@@ -24,6 +24,16 @@ from Bio.Restriction import CommOnly
 
 st.set_page_config(page_title="Primer Designer", layout="wide")
 
+# Tighten Streamlit's default top padding so the title sits near the top.
+st.markdown(
+    """
+    <style>
+    .block-container { padding-top: 2rem; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # NEB high-fidelity variants — map display name → BioPython base name.
 # HF enzymes cut identically to the base enzyme, so we pass the base name
 # to the script but let the user pick the HF variant in the UI.
