@@ -151,7 +151,7 @@ class TagPrimerResult:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Design primers for C-terminal protein tagging of genes."
+        description="Design primers for N- or C-terminal protein tagging of genes."
     )
     p.add_argument("--plasmid", required=True,
                    help="Suicide vector FASTA (used to extract vector overlap tails)")
@@ -161,6 +161,9 @@ def parse_args() -> argparse.Namespace:
                    help="FASTA of gene sequences to tag")
     p.add_argument("--output", required=True,
                    help="Output CSV path")
+    p.add_argument("--terminus", choices=["N", "C"], default="C",
+                   help="Which terminus to fuse the tag to. Default: C. "
+                        "N-terminal tagging is not yet implemented.")
     p.add_argument("--tag", default=DEFAULT_TAG,
                    help=f"Tag to fuse (including its fusion linker at the 5' end): "
                         f"either a hardcoded tag name or a path to a FASTA file. "
@@ -439,6 +442,100 @@ def check_tag_constants(tag_name: str, tag_seq: str) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
+def design_c_terminal(
+    gene_id: str,
+    gene_seq: str,
+    tag_name: str,
+    tag_seq: str,
+    genome_records: Sequence[Tuple[str, str]],
+    contig_to_file: dict,
+    vector_left_tail: str,
+    vector_right_tail: str,
+    args: argparse.Namespace,
+) -> Tuple[List[Tuple[str, str, Optional[float]]], Tuple, List[str]]:
+    """
+    Design the 6 primers for a C-terminal protein fusion.
+
+    Returns (primers, match_info, warnings) where:
+        primers    = list of (name, full_sequence, tm) tuples
+        match_info = (contig, start_1based, end_1based, strand)
+        warnings   = list of warning strings
+    """
+    warnings: List[str] = []
+
+    # For a tag_name like "GGGGG_GFP", the LT primers are labelled
+    # "linker-GFP_{fw,rev}" to match the reference SnapGene scheme. If the tag
+    # name has no underscore, use the whole name as the protein part.
+    _, _, protein_part = tag_name.partition("_")
+    protein_part = protein_part or tag_name
+
+    name_ab_fwd = f"AB-{gene_id}_fw"
+    name_ab_rev = f"AB-{gene_id}_rev"
+    name_lt_fwd = f"linker-{protein_part}_fw"
+    name_lt_rev = f"linker-{protein_part}_rev"
+    name_cd_fwd = f"CD-{gene_id}_fw"
+    name_cd_rev = f"CD-{gene_id}_rev"
+
+    matches = find_exact_matches(genome_records, gene_seq)
+
+    if not matches:
+        if not args.allow_unmatched_genes:
+            raise SystemExit(f"Error: gene {gene_id} not found in genome")
+        warnings.append("gene_not_found_in_genome")
+        primers: List[Tuple[str, str, Optional[float]]] = [
+            (name_ab_fwd, "", None),
+            (name_ab_rev, "", None),
+            (name_lt_fwd, "", None),
+            (name_lt_rev, "", None),
+            (name_cd_fwd, "", None),
+            (name_cd_rev, "", None),
+        ]
+        match_info: Tuple = ("", "", "", "")
+        return primers, match_info, warnings
+
+    if len(matches) > 1:
+        loci = "; ".join(
+            f"{contig_to_file.get(m.contig_id, m.contig_id)}:"
+            f"{m.start_0based + 1}-{m.end_0based}({m.strand})"
+            for m in matches
+        )
+        warnings.append(
+            f"VERIFY_LOCUS: gene found at {len(matches)} genomic locations "
+            f"({loci}) — flanking sequence taken from first match; "
+            f"primers may target the wrong copy"
+        )
+
+    match = matches[0]
+    left_block, right_block, edge_note = extract_tag_context(
+        genome_records, match, args.flank_length
+    )
+    if edge_note:
+        warnings.append(edge_note)
+
+    result = design_tag_primers(
+        left_block, right_block,
+        vector_left_tail, vector_right_tail,
+        tag_seq,
+        args,
+    )
+
+    primers = [
+        (name_ab_fwd, result.full_ab_fwd, result.tm_ab_fwd),
+        (name_ab_rev, result.full_ab_rev, result.tm_ab_rev),
+        (name_lt_fwd, result.full_lt_fwd, result.tm_lt_fwd),
+        (name_lt_rev, result.full_lt_rev, result.tm_lt_rev),
+        (name_cd_fwd, result.full_cd_fwd, result.tm_cd_fwd),
+        (name_cd_rev, result.full_cd_rev, result.tm_cd_rev),
+    ]
+    match_info = (
+        contig_to_file.get(match.contig_id, match.contig_id),
+        match.start_0based + 1,
+        match.end_0based,
+        match.strand,
+    )
+    return primers, match_info, warnings
+
+
 def main() -> int:
     args = parse_args()
     tag_name, tag_seq = resolve_tag(args.tag)
@@ -466,78 +563,19 @@ def main() -> int:
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    warnings: List[str] = []
-
-    # For a tag_name like "GGGGG_GFP", the LT primers are labelled
-    # "linker-GFP_{fw,rev}" to match the reference SnapGene scheme. If the tag
-    # name has no underscore, use the whole name as the protein part.
-    _, _, protein_part = tag_name.partition("_")
-    protein_part = protein_part or tag_name
-
-    name_ab_fwd = f"AB-{gene_id}_fw"
-    name_ab_rev = f"AB-{gene_id}_rev"
-    name_lt_fwd = f"linker-{protein_part}_fw"
-    name_lt_rev = f"linker-{protein_part}_rev"
-    name_cd_fwd = f"CD-{gene_id}_fw"
-    name_cd_rev = f"CD-{gene_id}_rev"
-
-    matches = find_exact_matches(genome_records, gene_seq)
-
-    if not matches:
-        if not args.allow_unmatched_genes:
-            print(f"Error: gene {gene_id} not found in genome", file=sys.stderr)
-            return 1
-        warnings.append("gene_not_found_in_genome")
-        primers = [
-            (name_ab_fwd, "", None),
-            (name_ab_rev, "", None),
-            (name_lt_fwd, "", None),
-            (name_lt_rev, "", None),
-            (name_cd_fwd, "", None),
-            (name_cd_rev, "", None),
-        ]
-        match_info: Tuple = ("", "", "", "")
-    else:
-        if len(matches) > 1:
-            loci = "; ".join(
-                f"{contig_to_file.get(m.contig_id, m.contig_id)}:"
-                f"{m.start_0based + 1}-{m.end_0based}({m.strand})"
-                for m in matches
-            )
-            warnings.append(
-                f"VERIFY_LOCUS: gene found at {len(matches)} genomic locations "
-                f"({loci}) — flanking sequence taken from first match; "
-                f"primers may target the wrong copy"
-            )
-
-        match = matches[0]
-        left_block, right_block, edge_note = extract_tag_context(
-            genome_records, match, args.flank_length
-        )
-        if edge_note:
-            warnings.append(edge_note)
-
-        result = design_tag_primers(
-            left_block, right_block,
+    if args.terminus == "C":
+        primers, match_info, warnings = design_c_terminal(
+            gene_id, gene_seq, tag_name, tag_seq,
+            genome_records, contig_to_file,
             vector_left_tail, vector_right_tail,
-            tag_seq,
             args,
         )
-
-        primers = [
-            (name_ab_fwd, result.full_ab_fwd, result.tm_ab_fwd),
-            (name_ab_rev, result.full_ab_rev, result.tm_ab_rev),
-            (name_lt_fwd, result.full_lt_fwd, result.tm_lt_fwd),
-            (name_lt_rev, result.full_lt_rev, result.tm_lt_rev),
-            (name_cd_fwd, result.full_cd_fwd, result.tm_cd_fwd),
-            (name_cd_rev, result.full_cd_rev, result.tm_cd_rev),
-        ]
-        match_info = (
-            contig_to_file.get(match.contig_id, match.contig_id),
-            match.start_0based + 1,
-            match.end_0based,
-            match.strand,
+    else:  # N
+        print(
+            "Error: N-terminal tagging is not yet implemented.",
+            file=sys.stderr,
         )
+        return 1
 
     with out_path.open("w", newline="") as fh:
         writer = csv.writer(fh)
@@ -577,7 +615,11 @@ def main() -> int:
             avg_tm = sum(valid_tms) / len(valid_tms)
             writer.writerow([""] * 13)
             writer.writerow([
-                "avg temp", round(avg_tm, 2), "", "",
+                "", "", "Avg", "",
+                "", "", "", "", "", "", "", "", "",
+            ])
+            writer.writerow([
+                "", "", round(avg_tm, 2), "",
                 "", "", "", "", "", "", "", "", "",
             ])
 

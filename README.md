@@ -16,6 +16,12 @@ conda env create -f environment.yml
 conda activate primers
 ```
 
+## Scripts
+
+- [Cloning primers](#cloning-primers-design_cloning_primers_20py) — amplify genes for insertion into a vector
+- [Deletion primers](#deletion-primers-design_deletion_primerspy) — four primers per gene for in-frame chromosomal deletion
+- [Protein tag primers](#protein-tag-primers-design_protein_tag_primerspy) — six primers to build a C-terminal protein fusion
+
 ---
 
 ## Cloning primers (`design_cloning_primers_2.0.py`)
