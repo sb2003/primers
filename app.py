@@ -559,7 +559,13 @@ with tab_deletion:
             help="Length of the vector overlap tail prepended to Primers A and D (for HiFi assembly into the digested vector).",
         )
     with col2:
-        junction_overlap = st.number_input("Junction overlap (bp)", value=10, min_value=0, key="deletion_junction")
+        junction_overlap = st.number_input(
+            "Junction overlap (bp)",
+            value=10,
+            min_value=0,
+            key="deletion_junction",
+            help="Length of the AB↔CD junction overlap tail prepended to Primers B and C so the two amplicons stitch together during HiFi assembly.",
+        )
     with col3:
         flank_length = st.text_input(
             "Flank length (blank = auto)",
@@ -724,7 +730,13 @@ with tab_tag:
             help="Length of the vector overlap tail prepended to AB_fwd and CD_rev (for HiFi assembly into the digested vector).",
         )
     with col2:
-        junction_overlap = st.number_input("Junction overlap (bp)", value=10, min_value=0, key="tag_junction")
+        junction_overlap = st.number_input(
+            "Junction overlap (bp)",
+            value=10,
+            min_value=0,
+            key="tag_junction",
+            help="Length contributed by each side to the AB↔LT and LT↔CD junction overlaps (total junction width is 2× this value).",
+        )
     with col3:
         flank_length = st.number_input(
             "Flank length (bp)",
