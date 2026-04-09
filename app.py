@@ -327,7 +327,7 @@ with tab_cloning:
     with st.expander(f"Genome and genes (default: {', '.join(DEFAULT_GENOME)} / {DEFAULT_GENES})"):
         genome_files = st.file_uploader("Genome FASTA(s) — upload to override", type=["fasta", "fa", "fna"], accept_multiple_files=True, key="cloning_genome")
         genes_file = st.file_uploader("Genes FASTA — upload to override", type=["fasta", "fa", "fna"], key="cloning_genes")
-    col1, col2 = st.columns(2)
+    col1, col2, _spacer_plasmid = st.columns([1, 1, 2])
     with col1:
         _pmm_idx = LOCAL_PLASMIDS.index("pMMB67EH.fasta") if "pMMB67EH.fasta" in LOCAL_PLASMIDS else 0
         plasmid_name = st.selectbox("Plasmid", LOCAL_PLASMIDS, index=_pmm_idx, format_func=lambda p: Path(p).stem, key="cloning_plasmid_sel") if LOCAL_PLASMIDS else None
@@ -508,7 +508,7 @@ with tab_deletion:
     with st.expander(f"Genome and genes (default: {', '.join(DEFAULT_GENOME)} / {DEFAULT_GENES})"):
         genome_files = st.file_uploader("Genome FASTA(s) — upload to override", type=["fasta", "fa", "fna"], accept_multiple_files=True, key="deletion_genome")
         genes_file = st.file_uploader("Genes FASTA — upload to override", type=["fasta", "fa", "fna"], key="deletion_genes")
-    col1, col2 = st.columns(2)
+    col1, col2, _spacer_plasmid = st.columns([1, 1, 2])
     with col1:
         plasmid_name = st.selectbox("Plasmid", LOCAL_PLASMIDS, format_func=lambda p: Path(p).stem, key="deletion_plasmid_sel") if LOCAL_PLASMIDS else None
     with col2:
@@ -633,7 +633,7 @@ with tab_tag:
     with st.expander(f"Genome and genes (default: {', '.join(DEFAULT_GENOME)} / {DEFAULT_GENES})"):
         genome_files = st.file_uploader("Genome FASTA(s) — upload to override", type=["fasta", "fa", "fna"], accept_multiple_files=True, key="tag_genome")
         genes_file = st.file_uploader("Genes FASTA — upload to override", type=["fasta", "fa", "fna"], key="tag_genes")
-    col1, col2 = st.columns(2)
+    col1, col2, _spacer_plasmid = st.columns([1, 1, 2])
     with col1:
         plasmid_name = st.selectbox("Plasmid", LOCAL_PLASMIDS, format_func=lambda p: Path(p).stem, key="tag_plasmid_sel") if LOCAL_PLASMIDS else None
     with col2:
