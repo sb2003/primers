@@ -20,14 +20,16 @@ python design_cloning_primers_2.0.py \
   --genome chr1.fasta chr2.fasta \
   --genes genes.fasta \
   --output cloning_primers.csv \
-  --left-enzyme BamHI \
-  --right-enzyme BamHI \
+  --three-prime-enzyme BamHI \
+  --five-prime-enzyme BamHI \
   --tail-mode plasmid_overlaps \
-  --replace-arc right_to_left \
+  --replace-arc five_to_three \
   --overlap-length 20 \
   --opt-primer-size 20 \
   --max-primer-size 22
 ```
+
+Enzymes are labeled per NEBuilder convention: `--three-prime-enzyme` sits at the vector backbone's 3' end (insert 5' side, forward primer); `--five-prime-enzyme` sits at the backbone's 5' end (insert 3' side, reverse primer).
 
 ## Design decisions
 - `--mv-conc 500` (default): calibrated to approximate NEBuilder Tm values (~0.8°C average error)

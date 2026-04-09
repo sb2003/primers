@@ -21,6 +21,7 @@ conda activate primers
 - [Cloning primers](#cloning-primers-design_cloning_primers_20py) — amplify genes for insertion into a vector
 - [Deletion primers](#deletion-primers-design_deletion_primerspy) — four primers per gene for in-frame chromosomal deletion
 - [Protein tag primers](#protein-tag-primers-design_protein_tag_primerspy) — six primers to fuse a tag to a gene (N- or C-terminal)
+- [Web app](#web-app) — launch the Streamlit interface
 
 ---
 
@@ -45,14 +46,16 @@ python design_cloning_primers_2.0.py \
   --genome chr1.fasta chr2.fasta \
   --genes genes.fasta \
   --output cloning_primers.csv \
-  --left-enzyme BamHI \
-  --right-enzyme BamHI \
+  --three-prime-enzyme BamHI \
+  --five-prime-enzyme BamHI \
   --tail-mode plasmid_overlaps \
-  --replace-arc right_to_left \
+  --replace-arc five_to_three \
   --overlap-length 20 \
   --opt-primer-size 20 \
   --max-primer-size 22
 ```
+
+Enzymes are labeled using the NEBuilder convention — the `--three-prime-enzyme` sits at the vector backbone's 3' end (where the insert's 5' end attaches, i.e. the forward primer side), and the `--five-prime-enzyme` sits at the vector backbone's 5' end (where the insert's 3' end attaches, i.e. the reverse primer side). Running this script with `--three-prime-enzyme X --five-prime-enzyme Y` is equivalent to running NEBuilder with a 3' X and a 5' Y.
 
 ### Key parameters
 
@@ -76,7 +79,7 @@ python design_cloning_primers_2.0.py \
 | `genome_contig` | Contig where the gene was found |
 | `plasmid_id` | Identifier of the plasmid used |
 | `resolved_overlap_mode` | How the overlap/tail was resolved (e.g. `single_cut_circular`) |
-| `left_enzyme` / `right_enzyme` | Restriction enzymes used |
+| `three_prime_enzyme` / `five_prime_enzyme` | Restriction enzymes used (NEBuilder convention: labeled by vector backbone end) |
 | `forward_primer_full_5to3` | Complete forward primer (tail + binding region) |
 | `reverse_primer_full_5to3` | Complete reverse primer (tail + binding region) |
 | `avg_tm_c` | Average Tm of forward and reverse binding regions (°C) |
@@ -135,16 +138,16 @@ python design_deletion_primers.py \
   --genome chr1.fasta chr2.fasta \
   --genes genes.fasta \
   --output deletion_primers.csv \
-  --left-enzyme NcoI \
-  --right-enzyme SacI
+  --three-prime-enzyme NcoI \
+  --five-prime-enzyme SacI
 ```
 
 ### Key parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `--left-enzyme` | required | Enzyme at the upstream (Primer A) end of the insert |
-| `--right-enzyme` | required | Enzyme at the downstream (Primer D) end of the insert |
+| `--three-prime-enzyme` | required | Enzyme at the vector backbone's 3' end (insert 5' end, Primer A side). For pGP704sacB + NcoI/SacI, this is NcoI. |
+| `--five-prime-enzyme` | required | Enzyme at the vector backbone's 5' end (insert 3' end, Primer D side). For pGP704sacB + NcoI/SacI, this is SacI. |
 | `--flank-length` | auto | Override auto-scaling: set a fixed amplicon length (outside bp + 9 bp into gene) |
 | `--overlap-length` | 20 | Length (bp) of the vector overlap tail on Primers A and D |
 | `--junction-overlap` | 10 | Length (bp) of the AB-to-CD junction overlap tail on Primers B and C |
@@ -159,10 +162,10 @@ python design_deletion_primers.py \
 |--------|-------------|
 | `gene_id` | Gene identifier from the input FASTA |
 | `gene_length_bp` | Length of the gene sequence |
-| `primer_A_5to3` | Full Primer A (vector tail + binding region) |
-| `primer_B_5to3` | Full Primer B (junction tail + binding region) |
-| `primer_C_5to3` | Full Primer C (junction tail + binding region) |
-| `primer_D_5to3` | Full Primer D (vector tail + binding region) |
+| `AB_fwd` | Full AB forward primer (vector tail + binding region) |
+| `AB_rev` | Full AB reverse primer (junction tail + binding region) |
+| `CD_fwd` | Full CD forward primer (junction tail + binding region) |
+| `CD_rev` | Full CD reverse primer (vector tail + binding region) |
 | `tm_A_c` – `tm_D_c` | Tm of each binding region (°C) |
 | `avg_tm_c` | Average Tm across all four binding regions (°C) |
 | `flank_length_bp` | Flank length used for this gene (auto-scaled or overridden) |
@@ -173,7 +176,7 @@ python design_deletion_primers.py \
 
 ### Notes
 
-- The left enzyme should be the one whose cut site is at the **upstream** end of the insert (the Primer A side). For pGP704sacB with NcoI + SacI, this is NcoI.
+- Enzymes are labeled using the NEBuilder convention — by the end of the linearized vector backbone, not the insert. The `--three-prime-enzyme` sits at the backbone's 3' end (where the insert's 5' end will attach, i.e. the Primer A side); the `--five-prime-enzyme` sits at the backbone's 5' end (Primer D side). For pGP704sacB with NcoI + SacI this means `--three-prime-enzyme NcoI --five-prime-enzyme SacI`, which is equivalent to running NEBuilder with a 3' NcoI and a 5' SacI.
 - Sticky-end offsets are handled automatically so the extracted vector overlap matches what NEBuilder/HiFi assembly expects.
 - If a gene appears at multiple genomic locations, a `VERIFY_LOCUS` warning is added and the first match is used. Always confirm you are targeting the correct copy before ordering primers.
 
@@ -278,8 +281,8 @@ python design_protein_tag_primers.py \
   --genome chr1.fasta chr2.fasta \
   --genes genes.fasta \
   --output vc1152_tag_primers.csv \
-  --left-enzyme NcoI \
-  --right-enzyme SacI \
+  --three-prime-enzyme NcoI \
+  --five-prime-enzyme SacI \
   --gene-ids VC1152
 ```
 
@@ -291,7 +294,7 @@ python design_protein_tag_primers.py \
   --genome chr1.fasta chr2.fasta \
   --genes genes.fasta \
   --output vc1152_tag_primers.csv \
-  --left-enzyme NcoI --right-enzyme SacI \
+  --three-prime-enzyme NcoI --five-prime-enzyme SacI \
   --terminus N \
   --tag my_GFP_linker.fasta \
   --gene-ids VC1152
@@ -305,7 +308,7 @@ python design_protein_tag_primers.py \
   --genome chr1.fasta chr2.fasta \
   --genes genes.fasta \
   --output vc1152_tag_primers.csv \
-  --left-enzyme NcoI --right-enzyme SacI \
+  --three-prime-enzyme NcoI --five-prime-enzyme SacI \
   --gene-ids VC1152 \
   --tag my_linker_mCherry.fasta
 ```
@@ -316,8 +319,8 @@ python design_protein_tag_primers.py \
 |-----------|---------|-------------|
 | `--terminus` | `C` | Which terminus to fuse the tag to (`N` or `C`). |
 | `--tag` | `GGGGG_GFP` (C only) | Tag to fuse. Either a hardcoded tag name or a path to a FASTA file. C-terminal tags must be `[linker + protein + stop]`; N-terminal tags must be `[ATG + protein + linker]` with no stop codon. **Required for `--terminus N`** — no N-terminal tags are hardcoded. |
-| `--left-enzyme` | required | Enzyme at the upstream (AB_fwd) end of the insert |
-| `--right-enzyme` | required | Enzyme at the downstream (CD_rev) end of the insert |
+| `--three-prime-enzyme` | required | Enzyme at the vector backbone's 3' end (insert 5' / AB_fwd side). For pGP704sacB + NcoI/SacI, this is NcoI. |
+| `--five-prime-enzyme` | required | Enzyme at the vector backbone's 5' end (insert 3' / CD_rev side). For pGP704sacB + NcoI/SacI, this is SacI. |
 | `--flank-length` | 650 | Length (bp) of upstream and downstream genomic flank |
 | `--overlap-length` | 20 | Length (bp) of the vector overlap tail on AB_fwd and CD_rev |
 | `--junction-overlap` | 10 | Length (bp) contributed by each side to the AB↔LT and LT↔CD junction overlaps (total junction width is 2×) |
@@ -368,6 +371,19 @@ The output CSV has **one row per primer** (6 rows total), followed by a blank ro
 
 ---
 
+## Web app
+
+Install the extra dependency and launch:
+
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+The app opens in your browser at `http://localhost:8501`.
+
+---
+
 ## Running on a subset of genes
 
 `design_cloning_primers_2.0.py` and `design_deletion_primers.py` accept `--gene-ids` to process only specific genes from the input FASTA instead of the entire file. Pass one or more gene IDs:
@@ -378,7 +394,7 @@ python design_deletion_primers.py \
   --genome chr1.fasta chr2.fasta \
   --genes genes.fasta \
   --output vca0571_deletion.csv \
-  --left-enzyme NcoI --right-enzyme SacI \
+  --three-prime-enzyme NcoI --five-prime-enzyme SacI \
   --gene-ids VCA0571
 ```
 

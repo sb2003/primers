@@ -10,11 +10,20 @@ Main behaviors
 - Supports classic restriction-site tails as an alternative mode.
 - Continues past per-gene failures instead of aborting the whole run.
 
+Enzyme labeling (NEBuilder convention)
+--------------------------------------
+Enzymes are labeled by which end of the linearized vector backbone (top strand)
+they sit at:
+    --three-prime-enzyme  → cut at the backbone's 3' end → where the insert's
+                            5' end attaches → used to build the forward primer tail
+    --five-prime-enzyme   → cut at the backbone's 5' end → where the insert's
+                            3' end attaches → used to build the reverse primer tail
+
 Important overlap logic
 -----------------------
 For plasmid_overlaps mode with a circular vector:
-- If left and right cuts are different, the replaced arc can be chosen.
-- If left and right cuts are the SAME cut (single-site linearization, e.g. BamHI/BamHI),
+- If 3' and 5' enzyme cuts are different, the replaced arc can be chosen.
+- If they are the SAME cut (single-site linearization, e.g. BamHI/BamHI),
   the correct default primer assignment is:
     * forward primer tail = reverse-complement of sequence downstream of the cut
     * reverse primer tail = sequence upstream of the cut
@@ -71,10 +80,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--genes", required=True)
     p.add_argument("--output", required=True)
 
-    p.add_argument("--left-enzyme", required=True)
-    p.add_argument("--right-enzyme", required=True)
-    p.add_argument("--left-cut-index", type=int, default=0)
-    p.add_argument("--right-cut-index", type=int, default=0)
+    p.add_argument("--three-prime-enzyme", required=True,
+                   help="Enzyme at the vector backbone's 3' end / insert 5' end (forward primer side).")
+    p.add_argument("--five-prime-enzyme", required=True,
+                   help="Enzyme at the vector backbone's 5' end / insert 3' end (reverse primer side).")
+    p.add_argument("--three-prime-cut-index", type=int, default=0,
+                   help="Which cut to use if the 3' enzyme cuts multiple times (default: 0)")
+    p.add_argument("--five-prime-cut-index", type=int, default=0,
+                   help="Which cut to use if the 5' enzyme cuts multiple times (default: 0)")
 
     p.add_argument(
         "--tail-mode",
@@ -83,19 +96,21 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--replace-arc",
-        choices=["shorter_arc", "longer_arc", "left_to_right", "right_to_left"],
+        choices=["shorter_arc", "longer_arc", "three_to_five", "five_to_three"],
         default="shorter_arc",
         help=(
             "When using a circular plasmid with two distinct cuts, choose which arc is replaced. "
+            "three_to_five = replace the arc going from the 3' enzyme cut to the 5' enzyme cut; "
+            "five_to_three = replace the arc going from the 5' enzyme cut to the 3' enzyme cut. "
             "Ignored for single-cut circular vectors and linear plasmids."
         ),
     )
     p.add_argument("--overlap-length", type=int, default=24)
 
-    p.add_argument("--left-clamp", default="GCGC")
-    p.add_argument("--right-clamp", default="GCGC")
-    p.add_argument("--left-extra", default="")
-    p.add_argument("--right-extra", default="")
+    p.add_argument("--three-prime-clamp", default="GCGC")
+    p.add_argument("--five-prime-clamp", default="GCGC")
+    p.add_argument("--three-prime-extra", default="")
+    p.add_argument("--five-prime-extra", default="")
 
     p.add_argument("--min-primer-size", type=int, default=18)
     p.add_argument("--opt-primer-size", type=int, default=22)
@@ -119,64 +134,70 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def resolve_replaced_arc(left0: int, right0: int, n: int, mode: str) -> str:
-    l2r = (right0 - left0) % n
-    r2l = (left0 - right0) % n
-    if mode in {"left_to_right", "right_to_left"}:
+def resolve_replaced_arc(three_prime0: int, five_prime0: int, n: int, mode: str) -> str:
+    three_to_five = (five_prime0 - three_prime0) % n
+    five_to_three = (three_prime0 - five_prime0) % n
+    if mode in {"three_to_five", "five_to_three"}:
         return mode
     if mode == "shorter_arc":
-        return "left_to_right" if l2r <= r2l else "right_to_left"
+        return "three_to_five" if three_to_five <= five_to_three else "five_to_three"
     if mode == "longer_arc":
-        return "left_to_right" if l2r >= r2l else "right_to_left"
+        return "three_to_five" if three_to_five >= five_to_three else "five_to_three"
     raise ValueError(f"Unknown replace-arc mode: {mode}")
 
 
-def build_tails(plasmid_seq: str, left_enzyme, right_enzyme, args: argparse.Namespace):
+def build_tails(plasmid_seq: str, three_prime_enzyme, five_prime_enzyme, args: argparse.Namespace):
     warnings: List[str] = []
-    left_cuts = enzyme_cut_positions_0based(left_enzyme, plasmid_seq, circular=args.circular_plasmid)
-    right_cuts = enzyme_cut_positions_0based(right_enzyme, plasmid_seq, circular=args.circular_plasmid)
-    left0 = select_cut(left_cuts, args.left_cut_index, args.left_enzyme)
-    right0 = select_cut(right_cuts, args.right_cut_index, args.right_enzyme)
+    three_prime_cuts = enzyme_cut_positions_0based(three_prime_enzyme, plasmid_seq, circular=args.circular_plasmid)
+    five_prime_cuts = enzyme_cut_positions_0based(five_prime_enzyme, plasmid_seq, circular=args.circular_plasmid)
+    three_prime0 = select_cut(three_prime_cuts, args.three_prime_cut_index, args.three_prime_enzyme)
+    five_prime0 = select_cut(five_prime_cuts, args.five_prime_cut_index, args.five_prime_enzyme)
 
     if args.tail_mode == "restriction_sites":
-        left_tail = sanitize_dna(args.left_clamp) + sanitize_dna(left_enzyme.site) + sanitize_dna(args.left_extra)
-        right_tail = sanitize_dna(args.right_clamp) + sanitize_dna(right_enzyme.site) + sanitize_dna(args.right_extra)
-        return left_tail, right_tail, left0, right0, left_cuts, right_cuts, warnings, "restriction_sites"
+        forward_tail = sanitize_dna(args.three_prime_clamp) + sanitize_dna(three_prime_enzyme.site) + sanitize_dna(args.three_prime_extra)
+        reverse_tail = sanitize_dna(args.five_prime_clamp) + sanitize_dna(five_prime_enzyme.site) + sanitize_dna(args.five_prime_extra)
+        return forward_tail, reverse_tail, three_prime0, five_prime0, three_prime_cuts, five_prime_cuts, warnings, "restriction_sites"
 
-    if args.circular_plasmid and left0 == right0:
+    if args.circular_plasmid and three_prime0 == five_prime0:
         # Single-cut circular vector: extract flanks on either side of the linearized ends.
-        # reverse tail = upstream of cut; forward tail = RC of downstream from last base of site.
-        site_start0 = left0 - int(left_enzyme.fst5)
-        site_end0 = site_start0 + len(left_enzyme.site)
-        upstream_raw, left_wrapped = extract_upstream(plasmid_seq, left0, args.overlap_length, circular=True)
-        downstream_raw, right_wrapped = extract_downstream(plasmid_seq, site_end0 - 1, args.overlap_length, circular=True)
-        if left_wrapped:
-            warnings.append("left_overlap_wrapped_around_circular_origin")
-        if right_wrapped:
-            warnings.append("right_overlap_wrapped_around_circular_origin")
-        left_tail = rc(downstream_raw) + sanitize_dna(args.left_extra)
-        right_tail = upstream_raw + sanitize_dna(args.right_extra)
+        # forward tail = upstream of cut; reverse tail = RC of downstream from last base of site.
+        site_start0 = three_prime0 - int(three_prime_enzyme.fst5)
+        site_end0 = site_start0 + len(three_prime_enzyme.site)
+        upstream_raw, up_wrapped = extract_upstream(plasmid_seq, three_prime0, args.overlap_length, circular=True)
+        downstream_raw, dn_wrapped = extract_downstream(plasmid_seq, site_end0 - 1, args.overlap_length, circular=True)
+        if up_wrapped:
+            warnings.append("upstream_overlap_wrapped_around_circular_origin")
+        if dn_wrapped:
+            warnings.append("downstream_overlap_wrapped_around_circular_origin")
+        forward_tail = upstream_raw + sanitize_dna(args.three_prime_extra)
+        reverse_tail = rc(downstream_raw) + sanitize_dna(args.five_prime_extra)
         warnings.append("single_cut_circular_vector_mode")
-        return left_tail, right_tail, left0, right0, left_cuts, right_cuts, warnings, "single_cut_circular"
+        return forward_tail, reverse_tail, three_prime0, five_prime0, three_prime_cuts, five_prime_cuts, warnings, "single_cut_circular"
+
+    # For 3' overhang enzymes (ovhg > 0) the downstream top strand begins ovhg bases
+    # before the top-strand cut, so HiFi overlaps must start there to include the
+    # overhang bases. 5' overhang and blunt enzymes need no adjustment.
+    five_prime_dn_offset = max(0, int(five_prime_enzyme.ovhg))
+    three_prime_dn_offset = max(0, int(three_prime_enzyme.ovhg))
 
     if args.circular_plasmid:
-        resolved = resolve_replaced_arc(left0, right0, len(plasmid_seq), args.replace_arc)
+        resolved = resolve_replaced_arc(three_prime0, five_prime0, len(plasmid_seq), args.replace_arc)
         warnings.append(f"resolved_replace_arc={resolved}")
-        if resolved == "left_to_right":
-            left_raw, left_wrapped = extract_upstream(plasmid_seq, left0, args.overlap_length, circular=True)
-            right_raw, right_wrapped = extract_downstream(plasmid_seq, right0, args.overlap_length, circular=True)
+        if resolved == "three_to_five":
+            fwd_raw, fwd_wrapped = extract_upstream(plasmid_seq, three_prime0, args.overlap_length, circular=True)
+            rev_raw, rev_wrapped = extract_downstream(plasmid_seq, five_prime0 - five_prime_dn_offset, args.overlap_length, circular=True)
         else:
-            left_raw, left_wrapped = extract_upstream(plasmid_seq, right0, args.overlap_length, circular=True)
-            right_raw, right_wrapped = extract_downstream(plasmid_seq, left0, args.overlap_length, circular=True)
+            fwd_raw, fwd_wrapped = extract_upstream(plasmid_seq, five_prime0, args.overlap_length, circular=True)
+            rev_raw, rev_wrapped = extract_downstream(plasmid_seq, three_prime0 - three_prime_dn_offset, args.overlap_length, circular=True)
     else:
         resolved = "linear_plasmid"
-        left_raw, left_wrapped = extract_upstream(plasmid_seq, left0, args.overlap_length, circular=False)
-        right_raw, right_wrapped = extract_downstream(plasmid_seq, right0, args.overlap_length, circular=False)
+        fwd_raw, fwd_wrapped = extract_upstream(plasmid_seq, three_prime0, args.overlap_length, circular=False)
+        rev_raw, rev_wrapped = extract_downstream(plasmid_seq, five_prime0 - five_prime_dn_offset, args.overlap_length, circular=False)
 
-    # Distinct-cut case: forward gets left flank as written; reverse gets right flank reverse-complemented.
-    left_tail = left_raw + sanitize_dna(args.left_extra)
-    right_tail = rc(right_raw) + sanitize_dna(args.right_extra)
-    return left_tail, right_tail, left0, right0, left_cuts, right_cuts, warnings, resolved
+    # Distinct-cut case: forward gets upstream flank as written; reverse gets downstream flank reverse-complemented.
+    forward_tail = fwd_raw + sanitize_dna(args.three_prime_extra)
+    reverse_tail = rc(rev_raw) + sanitize_dna(args.five_prime_extra)
+    return forward_tail, reverse_tail, three_prime0, five_prime0, three_prime_cuts, five_prime_cuts, warnings, resolved
 
 
 def summarize_matches(matches: Sequence[GenomeMatch]) -> Tuple[str, str, str, str]:
@@ -187,7 +208,7 @@ def summarize_matches(matches: Sequence[GenomeMatch]) -> Tuple[str, str, str, st
     return first.contig_id, str(first.start_0based + 1), str(first.end_0based), f"{first.strand};{status}"
 
 
-def design_with_primer3(gene_seq: str, left_tail: str, right_tail: str, args: argparse.Namespace) -> Optional[PrimerDesignResult]:
+def design_with_primer3(gene_seq: str, forward_tail: str, reverse_tail: str, args: argparse.Namespace) -> Optional[PrimerDesignResult]:
     primer3 = import_primer3()
     seq_args = {
         "SEQUENCE_TEMPLATE": gene_seq,
@@ -231,10 +252,10 @@ def design_with_primer3(gene_seq: str, left_tail: str, right_tail: str, args: ar
     return PrimerDesignResult(
         forward_binding=fbind,
         reverse_binding=rbind,
-        forward_tail=left_tail.lower(),
-        reverse_tail=right_tail.lower(),
-        forward_full=left_tail.lower() + fbind.upper(),
-        reverse_full=right_tail.lower() + rbind.upper(),
+        forward_tail=forward_tail.lower(),
+        reverse_tail=reverse_tail.lower(),
+        forward_full=forward_tail.lower() + fbind.upper(),
+        reverse_full=reverse_tail.lower() + rbind.upper(),
         forward_tm=ftm,
         reverse_tm=rtm,
         product_size=psize,
@@ -243,7 +264,7 @@ def design_with_primer3(gene_seq: str, left_tail: str, right_tail: str, args: ar
     )
 
 
-def manual_fallback(gene_seq: str, left_tail: str, right_tail: str, args: argparse.Namespace) -> PrimerDesignResult:
+def manual_fallback(gene_seq: str, forward_tail: str, reverse_tail: str, args: argparse.Namespace) -> PrimerDesignResult:
     primer3 = import_primer3()
     best = None
     best_score = None
@@ -265,10 +286,10 @@ def manual_fallback(gene_seq: str, left_tail: str, right_tail: str, args: argpar
                 best = PrimerDesignResult(
                     forward_binding=fbind,
                     reverse_binding=rbind,
-                    forward_tail=left_tail.lower(),
-                    reverse_tail=right_tail.lower(),
-                    forward_full=left_tail.lower() + fbind.upper(),
-                    reverse_full=right_tail.lower() + rbind.upper(),
+                    forward_tail=forward_tail.lower(),
+                    reverse_tail=reverse_tail.lower(),
+                    forward_full=forward_tail.lower() + fbind.upper(),
+                    reverse_full=reverse_tail.lower() + rbind.upper(),
                     forward_tm=ftm,
                     reverse_tm=rtm,
                     product_size=len(gene_seq),
@@ -277,7 +298,7 @@ def manual_fallback(gene_seq: str, left_tail: str, right_tail: str, args: argpar
                 )
     if best is None and args.gc_clamp > 0:
         # No GC-clamped primer found even in extended range; retry without clamp
-        return manual_fallback(gene_seq, left_tail, right_tail,
+        return manual_fallback(gene_seq, forward_tail, reverse_tail,
                                argparse.Namespace(**{**vars(args), "gc_clamp": 0}))
     if best is None:
         raise ValueError("could not construct fallback primer pair")
@@ -287,18 +308,18 @@ def manual_fallback(gene_seq: str, left_tail: str, right_tail: str, args: argpar
 def main() -> int:
     args = parse_args()
     plasmid_id, plasmid_seq = load_single_sequence(args.plasmid)
-    genome_records, _ = load_genome_records(args.genome)
+    genome_records, contig_to_file = load_genome_records(args.genome)
     genes = load_multi_fasta(args.genes)
     genes = filter_genes_by_ids(genes, args.gene_ids)
     if not genes:
         print("Error: no genes to process after --gene-ids filter", file=sys.stderr)
         return 1
 
-    left_enzyme = get_enzyme(args.left_enzyme)
-    right_enzyme = get_enzyme(args.right_enzyme)
+    three_prime_enzyme = get_enzyme(args.three_prime_enzyme)
+    five_prime_enzyme = get_enzyme(args.five_prime_enzyme)
 
-    left_tail, right_tail, left0, right0, left_cuts, right_cuts, tail_warnings, resolved_mode = build_tails(
-        plasmid_seq, left_enzyme, right_enzyme, args
+    forward_tail, reverse_tail, three_prime0, five_prime0, three_prime_cuts, five_prime_cuts, tail_warnings, resolved_mode = build_tails(
+        plasmid_seq, three_prime_enzyme, five_prime_enzyme, args
     )
 
     out_path = Path(args.output)
@@ -313,11 +334,6 @@ def main() -> int:
         writer.writerow([
             "gene_id",
             "gene_length_bp",
-            "genome_contig",
-            "plasmid_id",
-            "resolved_overlap_mode",
-            "left_enzyme",
-            "right_enzyme",
             "forward_primer_full_5to3",
             "reverse_primer_full_5to3",
             "avg_tm_c",
@@ -327,18 +343,15 @@ def main() -> int:
             "warnings",
             "",
             "",
+            "genome_contig",
+            "plasmid_id",
+            "three_prime_enzyme",
+            "five_prime_enzyme",
             "genome_start_1based",
             "genome_end_1based",
             "genome_match_status",
+            "resolved_overlap_mode",
             "tail_mode",
-            "left_cut_index_used",
-            "right_cut_index_used",
-            "left_cut_position_1based_after_base",
-            "right_cut_position_1based_after_base",
-            "forward_tail_5to3",
-            "reverse_tail_5to3",
-            "forward_binding_primer_5to3",
-            "reverse_binding_primer_5to3",
         ])
 
         for gene_id, gene_seq in tqdm(genes, desc="Designing primers", unit="gene"):
@@ -354,40 +367,32 @@ def main() -> int:
                 elif match_status.startswith("multiple_matches"):
                     warnings.append(match_status)
 
-                design = design_with_primer3(gene_seq, left_tail, right_tail, args)
+                design = design_with_primer3(gene_seq, forward_tail, reverse_tail, args)
                 if design is None:
                     warnings.append("primer3_failed_using_manual_fallback")
-                    design = manual_fallback(gene_seq, left_tail, right_tail, args)
+                    design = manual_fallback(gene_seq, forward_tail, reverse_tail, args)
 
                 writer.writerow([
                     gene_id,
                     len(gene_seq),
-                    contig_id,
-                    plasmid_id,
-                    resolved_mode,
-                    args.left_enzyme,
-                    args.right_enzyme,
                     design.forward_full,
                     design.reverse_full,
-                    round((design.forward_tm + design.reverse_tm) / 2, 2),
-                    round(design.forward_tm, 2),
-                    round(design.reverse_tm, 2),
+                    round((design.forward_tm + design.reverse_tm) / 2, 1),
+                    round(design.forward_tm, 1),
+                    round(design.reverse_tm, 1),
                     "" if design.pair_penalty is None else round(design.pair_penalty, 3),
                     ";".join(warnings),
                     "",
                     "",
+                    contig_to_file.get(contig_id, contig_id),
+                    plasmid_id,
+                    args.three_prime_enzyme,
+                    args.five_prime_enzyme,
                     start_1based,
                     end_1based,
                     match_status,
+                    resolved_mode,
                     args.tail_mode,
-                    args.left_cut_index,
-                    args.right_cut_index,
-                    left0 + 1,
-                    right0 + 1,
-                    design.forward_tail,
-                    design.reverse_tail,
-                    design.forward_binding,
-                    design.reverse_binding,
                 ])
                 written += 1
             except Exception as exc:

@@ -5,12 +5,12 @@ Design in-frame deletion primers for genes, with tails for HiFi assembly into a 
 For each gene, four primers are designed across two amplicons:
 
   Left amplicon  (509 bp = 500 bp upstream + first 9 bp of gene):
-    Primer A — forward; 5' tail = vector overlap at left enzyme cut
+    Primer A — forward; 5' tail = vector overlap at 3' enzyme cut
     Primer B — reverse;  5' tail = junction overlap (RC of start of right amplicon)
 
   Right amplicon (509 bp = last 9 bp of gene + 500 bp downstream):
     Primer C — forward; 5' tail = junction overlap (end of left amplicon)
-    Primer D — reverse;  5' tail = vector overlap at right enzyme cut
+    Primer D — reverse;  5' tail = vector overlap at 5' enzyme cut
 
 Tails are lowercase; gene-binding regions are uppercase in the output.
 Tm values are reported for the binding region only (3' annealing portion).
@@ -89,14 +89,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output", required=True,
                    help="Output CSV path")
 
-    p.add_argument("--left-enzyme", required=True,
-                   help="Enzyme at the upstream (Primer A) end of the insert (e.g. NcoI for pGP704sacB)")
-    p.add_argument("--right-enzyme", required=True,
-                   help="Enzyme at the downstream (Primer D) end of the insert (e.g. SacI for pGP704sacB)")
-    p.add_argument("--left-cut-index", type=int, default=0,
-                   help="Which cut to use if the left enzyme cuts multiple times (default: 0)")
-    p.add_argument("--right-cut-index", type=int, default=0,
-                   help="Which cut to use if the right enzyme cuts multiple times (default: 0)")
+    p.add_argument("--three-prime-enzyme", required=True,
+                   help="Enzyme at the vector backbone's 3' end / insert 5' end (Primer A side). "
+                        "For pGP704sacB digested with NcoI + SacI, this is NcoI.")
+    p.add_argument("--five-prime-enzyme", required=True,
+                   help="Enzyme at the vector backbone's 5' end / insert 3' end (Primer D side). "
+                        "For pGP704sacB digested with NcoI + SacI, this is SacI.")
+    p.add_argument("--three-prime-cut-index", type=int, default=0,
+                   help="Which cut to use if the 3' enzyme cuts multiple times (default: 0)")
+    p.add_argument("--five-prime-cut-index", type=int, default=0,
+                   help="Which cut to use if the 5' enzyme cuts multiple times (default: 0)")
     p.add_argument("--circular-plasmid", action="store_true", default=True)
     p.add_argument("--linear-plasmid", action="store_false", dest="circular_plasmid")
 
@@ -130,40 +132,41 @@ def parse_args() -> argparse.Namespace:
 # Plasmid / enzyme helpers
 # ---------------------------------------------------------------------------
 
-def build_vector_tails(plasmid_seq: str, left_enzyme, right_enzyme,
+def build_vector_tails(plasmid_seq: str, three_prime_enzyme, five_prime_enzyme,
                        args: argparse.Namespace) -> Tuple[str, str]:
     """
-    Return (left_tail, right_tail) for Primers A and D.
+    Return (three_prime_tail, five_prime_tail) for Primers A and D.
 
-    left_tail  = sequence upstream of the left enzyme cut  → prepended to Primer A
-    right_tail = RC of sequence downstream of the right enzyme cut → prepended to Primer D
+    three_prime_tail = sequence upstream of the 3' enzyme cut → prepended to Primer A (insert 5' end)
+    five_prime_tail  = RC of sequence downstream of the 5' enzyme cut → prepended to Primer D (insert 3' end)
 
-    The left enzyme should be the one whose cut site is at the upstream (5') end of
-    the insert (e.g. NcoI for pGP704sacB digested with NcoI + SacI).
+    The 3' enzyme is the one whose cut site sits at the vector backbone's 3' end
+    (where the insert's 5' end will attach). For pGP704sacB digested with NcoI + SacI,
+    this is NcoI. The 5' enzyme is SacI.
 
     Sticky-end offsets are accounted for so the extracted overlap matches what HiFi
     assembly uses (including the 3' overhang bases for 3'-overhang enzymes).
     """
-    left_cuts  = enzyme_cut_positions_0based(left_enzyme,  plasmid_seq, args.circular_plasmid)
-    right_cuts = enzyme_cut_positions_0based(right_enzyme, plasmid_seq, args.circular_plasmid)
-    left0  = select_cut(left_cuts,  args.left_cut_index,  args.left_enzyme)
-    right0 = select_cut(right_cuts, args.right_cut_index, args.right_enzyme)
+    three_prime_cuts = enzyme_cut_positions_0based(three_prime_enzyme, plasmid_seq, args.circular_plasmid)
+    five_prime_cuts  = enzyme_cut_positions_0based(five_prime_enzyme,  plasmid_seq, args.circular_plasmid)
+    three_prime0 = select_cut(three_prime_cuts, args.three_prime_cut_index, args.three_prime_enzyme)
+    five_prime0  = select_cut(five_prime_cuts,  args.five_prime_cut_index,  args.five_prime_enzyme)
 
-    if left0 == right0:
+    if three_prime0 == five_prime0:
         raise ValueError(
-            "Left and right enzyme cut at the same position. "
+            "3' and 5' enzyme cut at the same position. "
             "For single-cut vectors use the cloning script instead."
         )
 
     # In biopython: ovhg > 0 = 3' overhang, ovhg < 0 = 5' overhang.
     # For 3' overhang enzymes the HiFi overlap starts at the bottom-strand cut,
     # which is ovhg bases before the top-strand cut position.
-    right_dn_start = right0 - max(0, right_enzyme.ovhg)
+    five_prime_dn_start = five_prime0 - max(0, five_prime_enzyme.ovhg)
 
-    left_tail, _  = extract_upstream(plasmid_seq, left0, args.overlap_length, args.circular_plasmid)
-    right_raw, _  = extract_downstream(plasmid_seq, right_dn_start, args.overlap_length, args.circular_plasmid)
-    right_tail = rc(right_raw)
-    return left_tail, right_tail
+    three_prime_tail, _ = extract_upstream(plasmid_seq, three_prime0, args.overlap_length, args.circular_plasmid)
+    five_prime_raw, _   = extract_downstream(plasmid_seq, five_prime_dn_start, args.overlap_length, args.circular_plasmid)
+    five_prime_tail = rc(five_prime_raw)
+    return three_prime_tail, five_prime_tail
 
 
 # ---------------------------------------------------------------------------
@@ -263,8 +266,8 @@ def best_primer(seq: str, from_end: bool, args: argparse.Namespace) -> str:
 def design_deletion_primers(
     left_block: str,
     right_block: str,
-    vector_left_tail: str,
-    vector_right_tail: str,
+    vector_three_prime_tail: str,
+    vector_five_prime_tail: str,
     args: argparse.Namespace,
 ) -> DeletionPrimerResult:
     bind_a = best_primer(left_block,  from_end=False, args=args)
@@ -282,8 +285,8 @@ def design_deletion_primers(
     tail_b = rc(right_block[:jn])
     tail_c = left_block[-jn:]
 
-    tail_a = vector_left_tail
-    tail_d = vector_right_tail
+    tail_a = vector_three_prime_tail
+    tail_d = vector_five_prime_tail
 
     def full(tail: str, bind: str) -> str:
         return tail.lower() + bind.upper()
@@ -328,10 +331,10 @@ def main() -> int:
     args = parse_args()
 
     plasmid_id, plasmid_seq = load_single_sequence(args.plasmid)
-    left_enzyme  = get_enzyme(args.left_enzyme)
-    right_enzyme = get_enzyme(args.right_enzyme)
-    vector_left_tail, vector_right_tail = build_vector_tails(
-        plasmid_seq, left_enzyme, right_enzyme, args
+    three_prime_enzyme = get_enzyme(args.three_prime_enzyme)
+    five_prime_enzyme  = get_enzyme(args.five_prime_enzyme)
+    vector_three_prime_tail, vector_five_prime_tail = build_vector_tails(
+        plasmid_seq, three_prime_enzyme, five_prime_enzyme, args
     )
 
     genome_records, contig_to_file = load_genome_records(args.genome)
@@ -353,10 +356,10 @@ def main() -> int:
         writer.writerow([
             "gene_id",
             "gene_length_bp",
-            "primer_A_5to3",
-            "primer_B_5to3",
-            "primer_C_5to3",
-            "primer_D_5to3",
+            "AB_fwd",
+            "AB_rev",
+            "CD_fwd",
+            "CD_rev",
             "tm_A_c",
             "tm_B_c",
             "tm_C_c",
@@ -410,10 +413,10 @@ def main() -> int:
 
                 result = design_deletion_primers(
                     left_block, right_block,
-                    vector_left_tail, vector_right_tail,
+                    vector_three_prime_tail, vector_five_prime_tail,
                     args,
                 )
-                avg_tm = round((result.tm_a + result.tm_b + result.tm_c + result.tm_d) / 4, 2)
+                avg_tm = round((result.tm_a + result.tm_b + result.tm_c + result.tm_d) / 4, 1)
 
                 writer.writerow([
                     gene_id,
@@ -422,10 +425,10 @@ def main() -> int:
                     result.full_b,
                     result.full_c,
                     result.full_d,
-                    round(result.tm_a, 2),
-                    round(result.tm_b, 2),
-                    round(result.tm_c, 2),
-                    round(result.tm_d, 2),
+                    round(result.tm_a, 1),
+                    round(result.tm_b, 1),
+                    round(result.tm_c, 1),
+                    round(result.tm_d, 1),
                     avg_tm,
                     flank,
                     ";".join(warnings),
