@@ -344,7 +344,7 @@ with tab_cloning:
     )
 
     st.subheader("Input files")
-    with st.expander(f"Genome and genes (default: {', '.join(DEFAULT_GENOME)} / {DEFAULT_GENES})"):
+    with st.expander("Genome and genes (default: Vibrio cholerae O1 El Tor A1552)"):
         genome_files = st.file_uploader("Genome FASTA(s) — upload to override", type=["fasta", "fa", "fna"], accept_multiple_files=True, key="cloning_genome")
         genes_file = st.file_uploader("Genes FASTA — upload to override", type=["fasta", "fa", "fna"], key="cloning_genes")
     col1, col2, _spacer_plasmid = st.columns([1, 3, 4])
@@ -531,7 +531,7 @@ with tab_deletion:
     )
 
     st.subheader("Input files")
-    with st.expander(f"Genome and genes (default: {', '.join(DEFAULT_GENOME)} / {DEFAULT_GENES})"):
+    with st.expander("Genome and genes (default: Vibrio cholerae O1 El Tor A1552)"):
         genome_files = st.file_uploader("Genome FASTA(s) — upload to override", type=["fasta", "fa", "fna"], accept_multiple_files=True, key="deletion_genome")
         genes_file = st.file_uploader("Genes FASTA — upload to override", type=["fasta", "fa", "fna"], key="deletion_genes")
     col1, col2, _spacer_plasmid = st.columns([1, 3, 4])
@@ -668,7 +668,7 @@ with tab_tag:
     )
 
     st.subheader("Input files")
-    with st.expander(f"Genome and genes (default: {', '.join(DEFAULT_GENOME)} / {DEFAULT_GENES})"):
+    with st.expander("Genome and genes (default: Vibrio cholerae O1 El Tor A1552)"):
         genome_files = st.file_uploader("Genome FASTA(s) — upload to override", type=["fasta", "fa", "fna"], accept_multiple_files=True, key="tag_genome")
         genes_file = st.file_uploader("Genes FASTA — upload to override", type=["fasta", "fa", "fna"], key="tag_genes")
     col1, col2, _spacer_plasmid = st.columns([1, 3, 4])
