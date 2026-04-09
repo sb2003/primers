@@ -322,7 +322,17 @@ LOCAL_PLASMIDS = sorted(
 # Main area
 # ---------------------------------------------------------------------------
 
-st.title("Primer Designer")
+_title_col, _issue_col = st.columns([5, 1])
+with _title_col:
+    st.title("Primer Designer")
+with _issue_col:
+    st.markdown(
+        '<div style="text-align: right; padding-top: 1.8rem;">'
+        '<a href="mailto:julek@batory.pl?subject=Primers%20app%20feedback" '
+        'style="font-size: 0.9rem;">Report an issue</a>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
 tab_cloning, tab_deletion, tab_tag = st.tabs(["Cloning", "Deletion", "Protein Tag"])
 
