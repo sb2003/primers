@@ -3,6 +3,8 @@ Primer Design Tools
 
 Automated primer design for cloning, in-frame deletion, and protein tagging of genes in *Vibrio cholerae*.
 
+Try it in your browser: **[primers.streamlit.app](https://primers.streamlit.app/)**. To run the scripts locally from the command line, follow the instructions below.
+
 ## Prerequisites
 
 - [Git](https://git-scm.com/downloads)
