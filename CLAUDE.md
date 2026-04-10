@@ -16,9 +16,9 @@ python design_cloning_primers.py ...
 ## Standard command
 ```bash
 python design_cloning_primers.py \
-  --plasmid pMMB67EH.fasta \
-  --genome chr1.fasta chr2.fasta \
-  --genes genes.fasta \
+  --plasmid sequences/plasmids/pMMB67EH.fasta \
+  --genome sequences/genomes/chr1.fasta sequences/genomes/chr2.fasta \
+  --genes sequences/genomes/genes.fasta \
   --output cloning_primers.csv \
   --three-prime-enzyme BamHI \
   --five-prime-enzyme BamHI \

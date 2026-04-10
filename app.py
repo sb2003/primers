@@ -194,7 +194,7 @@ def resolve_plasmid(selected_name: str | None, uploaded_file) -> str | None:
     if uploaded_file:
         return save_uploaded(uploaded_file)
     if selected_name:
-        return str(SCRIPT_DIR / selected_name)
+        return str(_PLASMIDS_DIR / selected_name)
     return None
 
 
@@ -203,7 +203,7 @@ def resolve_genome(uploaded_files: list) -> list[str] | None:
     if uploaded_files:
         return [save_uploaded(g) for g in uploaded_files]
     if DEFAULT_GENOME:
-        return [str(SCRIPT_DIR / f) for f in DEFAULT_GENOME]
+        return [str(_GENOMES_DIR / f) for f in DEFAULT_GENOME]
     return None
 
 
@@ -212,7 +212,7 @@ def resolve_genes(uploaded_file) -> str | None:
     if uploaded_file:
         return save_uploaded(uploaded_file)
     if DEFAULT_GENES:
-        return str(SCRIPT_DIR / DEFAULT_GENES)
+        return str(_GENOMES_DIR / DEFAULT_GENES)
     return None
 
 
@@ -417,13 +417,15 @@ SCRIPT_DIR = Path(__file__).parent
 # Auto-detect local genome and genes files
 # ---------------------------------------------------------------------------
 
+_GENOMES_DIR = SCRIPT_DIR / "sequences" / "genomes"
+_PLASMIDS_DIR = SCRIPT_DIR / "sequences" / "plasmids"
 DEFAULT_GENOME = sorted(
-    p.name for p in SCRIPT_DIR.glob("chr*.fasta")
-)
-DEFAULT_GENES = "genes.fasta" if (SCRIPT_DIR / "genes.fasta").exists() else None
+    p.name for p in _GENOMES_DIR.glob("chr*.fasta")
+) if _GENOMES_DIR.is_dir() else []
+DEFAULT_GENES = "genes.fasta" if (_GENOMES_DIR / "genes.fasta").exists() else None
 LOCAL_PLASMIDS = sorted(
-    p.name for p in SCRIPT_DIR.glob("p*.fasta")
-)
+    p.name for p in _PLASMIDS_DIR.glob("p*.fasta")
+) if _PLASMIDS_DIR.is_dir() else []
 
 # ---------------------------------------------------------------------------
 # Main area

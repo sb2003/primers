@@ -3,6 +3,6 @@
 *.dna
 *.gbk
 *.csv
-test_genes.fasta
+sequences/genomes/test_genes.fasta
 __pycache__/
 backups/
