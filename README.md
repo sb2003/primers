@@ -48,7 +48,7 @@ Designs primers to amplify each gene for insertion into a vector using HiFi asse
 ```bash
 python design_cloning_primers.py \
   --plasmid sequences/plasmids/pMMB67EH.fasta \
-  --genome sequences/genomes/chr1.fasta sequences/genomes/chr2.fasta \
+  --genome sequences/genomes/chr*.fasta \
   --genes sequences/genomes/genes.fasta \
   --output cloning_primers.csv \
   --three-prime-enzyme BamHI \
@@ -143,7 +143,7 @@ For insertion into pGP704sacB digested with NcoI and SacI:
 ```bash
 python design_deletion_primers.py \
   --plasmid sequences/plasmids/pGP704sacB.fasta \
-  --genome sequences/genomes/chr1.fasta sequences/genomes/chr2.fasta \
+  --genome sequences/genomes/chr*.fasta \
   --genes sequences/genomes/genes.fasta \
   --output deletion_primers.csv \
   --three-prime-enzyme NcoI \
@@ -288,7 +288,7 @@ For insertion into pGP704sacB digested with NcoI and SacI, fusing `GGGGG_GFP` (5
 ```bash
 python design_protein_tag_primers.py \
   --plasmid sequences/plasmids/pGP704sacB.fasta \
-  --genome sequences/genomes/chr1.fasta sequences/genomes/chr2.fasta \
+  --genome sequences/genomes/chr*.fasta \
   --genes sequences/genomes/genes.fasta \
   --output vc1152_tag_primers.csv \
   --three-prime-enzyme NcoI \
@@ -301,7 +301,7 @@ For N-terminal tagging there are no hardcoded tags — supply your own via `--ta
 ```bash
 python design_protein_tag_primers.py \
   --plasmid sequences/plasmids/pGP704sacB.fasta \
-  --genome sequences/genomes/chr1.fasta sequences/genomes/chr2.fasta \
+  --genome sequences/genomes/chr*.fasta \
   --genes sequences/genomes/genes.fasta \
   --output vc1152_tag_primers.csv \
   --three-prime-enzyme NcoI --five-prime-enzyme SacI \
@@ -315,7 +315,7 @@ To use a custom C-terminal tag, supply a FASTA file containing `[linker + protei
 ```bash
 python design_protein_tag_primers.py \
   --plasmid sequences/plasmids/pGP704sacB.fasta \
-  --genome sequences/genomes/chr1.fasta sequences/genomes/chr2.fasta \
+  --genome sequences/genomes/chr*.fasta \
   --genes sequences/genomes/genes.fasta \
   --output vc1152_tag_primers.csv \
   --three-prime-enzyme NcoI --five-prime-enzyme SacI \
@@ -403,7 +403,7 @@ To stop the app, return to the terminal where it is running and press `Ctrl+C` (
 ```bash
 python design_deletion_primers.py \
   --plasmid sequences/plasmids/pGP704sacB.fasta \
-  --genome sequences/genomes/chr1.fasta sequences/genomes/chr2.fasta \
+  --genome sequences/genomes/chr*.fasta \
   --genes sequences/genomes/genes.fasta \
   --output vca0571_deletion.csv \
   --three-prime-enzyme NcoI --five-prime-enzyme SacI \
