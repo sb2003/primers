@@ -22,14 +22,14 @@ conda activate primers
 
 ## Scripts
 
-- [Cloning primers](#cloning-primers-design_cloning_primers_20py) — amplify genes for insertion into a vector
+- [Cloning primers](#cloning-primers-design_cloning_primerspy) — amplify genes for insertion into a vector
 - [Deletion primers](#deletion-primers-design_deletion_primerspy) — four primers per gene for in-frame chromosomal deletion
 - [Protein tag primers](#protein-tag-primers-design_protein_tag_primerspy) — six primers to fuse a tag to a gene (N- or C-terminal)
 - [Web app](#web-app) — launch the Streamlit interface
 
 ---
 
-## Cloning primers (`design_cloning_primers_2.0.py`)
+## Cloning primers (`design_cloning_primers.py`)
 
 Designs primers to amplify each gene for insertion into a vector using HiFi assembly or restriction cloning.
 
@@ -46,7 +46,7 @@ Designs primers to amplify each gene for insertion into a vector using HiFi asse
 ### Example
 
 ```bash
-python design_cloning_primers_2.0.py \
+python design_cloning_primers.py \
   --plasmid pMMB67EH.fasta \
   --genome chr1.fasta chr2.fasta \
   --genes genes.fasta \
@@ -398,7 +398,7 @@ To stop the app, return to the terminal where it is running and press `Ctrl+C` (
 
 ## Running on a subset of genes
 
-`design_cloning_primers_2.0.py` and `design_deletion_primers.py` accept `--gene-ids` to process only specific genes from the input FASTA instead of the entire file. Pass one or more gene IDs:
+`design_cloning_primers.py` and `design_deletion_primers.py` accept `--gene-ids` to process only specific genes from the input FASTA instead of the entire file. Pass one or more gene IDs:
 
 ```bash
 python design_deletion_primers.py \

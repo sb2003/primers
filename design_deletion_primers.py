@@ -370,7 +370,7 @@ def _build_deletion_linearized(
     boundary_left = three_prime0
     kept_continue = (five_prime0 - five_prime_dn_offset) % n
 
-    # Same slicing logic as _linearize_assembly in design_cloning_primers_2.0.py:
+    # Same slicing logic as _linearize_assembly in design_cloning_primers.py:
     # if the replaced arc does not cross the origin, the kept backbone is two
     # slices that must be glued together with the insert last; otherwise the
     # kept backbone is already one contiguous slice.

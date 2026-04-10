@@ -402,7 +402,7 @@ def show_results(
 # ---------------------------------------------------------------------------
 
 SCRIPTS = {
-    "Cloning primers": "design_cloning_primers_2.0.py",
+    "Cloning primers": "design_cloning_primers.py",
     "Deletion primers": "design_deletion_primers.py",
     "Protein tag primers": "design_protein_tag_primers.py",
 }
@@ -634,7 +634,7 @@ with tab_cloning:
 
             progress_bar = st.progress(0.0, text="Designing primers...")
             rc, _, stderr = run_script_with_progress(
-                "design_cloning_primers_2.0.py", args, SCRIPT_DIR, progress_bar
+                "design_cloning_primers.py", args, SCRIPT_DIR, progress_bar
             )
             progress_bar.empty()
             if rc != 0 and not Path(out_path).exists():

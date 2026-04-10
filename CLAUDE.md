@@ -4,18 +4,18 @@
 A Python script that designs cloning primers for a set of genes, given a plasmid and genome. Outputs a CSV with full primers, Tm values, and genome coordinates.
 
 ## Key file
-- `design_cloning_primers_2.0.py` — the main script
+- `design_cloning_primers.py` — the main script
 
 ## Environment
 Always run the script using the `primers` conda environment:
 ```bash
 conda activate primers
-python design_cloning_primers_2.0.py ...
+python design_cloning_primers.py ...
 ```
 
 ## Standard command
 ```bash
-python design_cloning_primers_2.0.py \
+python design_cloning_primers.py \
   --plasmid pMMB67EH.fasta \
   --genome chr1.fasta chr2.fasta \
   --genes genes.fasta \
