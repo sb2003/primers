@@ -5,6 +5,7 @@ Wraps the existing CLI scripts via subprocess — no modifications to the
 original programs.
 """
 
+import json
 import os
 import re
 import subprocess
@@ -12,10 +13,12 @@ import sys
 import tempfile
 import threading
 import time
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from Bio import SeqIO
 from Bio.Restriction import CommOnly
 
 # ---------------------------------------------------------------------------
@@ -213,6 +216,51 @@ def resolve_genes(uploaded_file) -> str | None:
     return None
 
 
+@st.cache_data(show_spinner=False)
+def _parse_gene_ids_from_path(path: str) -> frozenset:
+    return frozenset(rec.id for rec in SeqIO.parse(path, "fasta"))
+
+
+@st.cache_data(show_spinner=False)
+def _parse_gene_ids_from_bytes(data: bytes) -> frozenset:
+    from io import StringIO
+    return frozenset(rec.id for rec in SeqIO.parse(StringIO(data.decode("utf-8")), "fasta"))
+
+
+def get_current_gene_ids(uploaded_file) -> frozenset:
+    """Return the set of gene IDs in the currently-configured genes FASTA."""
+    if uploaded_file is not None:
+        try:
+            return _parse_gene_ids_from_bytes(uploaded_file.getvalue())
+        except Exception:
+            return frozenset()
+    if DEFAULT_GENES:
+        try:
+            return _parse_gene_ids_from_path(str(SCRIPT_DIR / DEFAULT_GENES))
+        except Exception:
+            return frozenset()
+    return frozenset()
+
+
+def _date_stamp() -> str:
+    """Return today's date as mmddyy."""
+    return date.today().strftime("%m%d%y")
+
+
+def _safe_part(s: str) -> str:
+    """Sanitize a string for use as a filename component."""
+    return re.sub(r"[^\w.-]", "_", s)
+
+
+def _plasmid_stem(plasmid_name, plasmid_upload) -> str:
+    """Return the plasmid name without extension, preferring uploaded file."""
+    if plasmid_upload is not None:
+        return Path(plasmid_upload.name).stem
+    if plasmid_name:
+        return Path(plasmid_name).stem
+    return "plasmid"
+
+
 def show_stderr(stderr: str):
     """Parse stderr lines and display warnings / errors only."""
     for line in stderr.strip().splitlines():
@@ -225,7 +273,12 @@ def show_stderr(stderr: str):
             st.error(line)
 
 
-def show_results(csv_path: str, stderr: str):
+def show_results(
+    csv_path: str,
+    stderr: str,
+    download_filename: str | None = None,
+    rename_columns: dict[str, str] | None = None,
+):
     """Read the output CSV, display it, and offer a download button."""
     show_stderr(stderr)
 
@@ -236,10 +289,27 @@ def show_results(csv_path: str, stderr: str):
 
     raw = p.read_text()
 
+    if rename_columns:
+        # Rewrite just the header row with renamed columns; leave the rest
+        # of the CSV byte-for-byte intact so multi-row layouts (e.g. the
+        # protein-tag Avg row) survive.
+        import csv as _csv
+        from io import StringIO as _StringIO
+
+        first_newline = raw.find("\n")
+        if first_newline != -1:
+            header_line = raw[:first_newline]
+            rest = raw[first_newline + 1:]
+            header = next(_csv.reader([header_line]))
+            new_header = [rename_columns.get(c, c) for c in header]
+            buf = _StringIO()
+            _csv.writer(buf).writerow(new_header)
+            raw = buf.getvalue().rstrip("\r\n") + "\n" + rest
+
     st.download_button(
         label="Download CSV",
         data=raw,
-        file_name=p.name,
+        file_name=download_filename or p.name,
         mime="text/csv",
     )
 
@@ -251,6 +321,8 @@ def show_results(csv_path: str, stderr: str):
         # so the formatters below use try/except to handle both numbers and
         # blanks / non-numeric labels (like the protein-tag "Avg" row).
         df = df.fillna("")
+        if rename_columns:
+            df = df.rename(columns=rename_columns)
 
         def _fmt_int(v):
             try:
@@ -285,7 +357,7 @@ def show_results(csv_path: str, stderr: str):
                 {"selector": "td", "props": [("white-space", "nowrap")]},
             ])
         )
-        st.table(styled)
+        st.dataframe(styled, hide_index=True, use_container_width=True)
     except Exception:
         st.code(raw)
 
@@ -404,7 +476,7 @@ with tab_cloning:
             ),
         )
 
-    col1, _spacer = st.columns([1, 3])
+    col1, col2, _spacer = st.columns([1, 3, 4])
     with col1:
         overlap_length = st.number_input(
             "Overlap length (bp)",
@@ -413,9 +485,7 @@ with tab_cloning:
             key="cloning_overlap",
             help="Length of the 5' plasmid overlap tail added to each primer (for HiFi assembly into the vector).",
         )
-
-    col1, _spacer = st.columns([2, 2])
-    with col1:
+    with col2:
         gene_ids = st.text_input("Gene IDs (space-separated, leave blank for all)", value="", key="cloning_gene_ids")
 
     # Restriction-site mode extras
@@ -521,12 +591,29 @@ with tab_cloning:
                 st.error(f"Script exited with code {rc}")
                 show_stderr(stderr)
             else:
-                show_results(out_path, stderr)
+                download_name = (
+                    f"cloning_{_safe_part(_plasmid_stem(plasmid_name, plasmid_upload))}"
+                    f"_{_safe_part(five_prime_enzyme)}_{_safe_part(three_prime_enzyme)}"
+                    f"_{_date_stamp()}.csv"
+                )
+                _gene_id_list = gene_ids.split()
+                rename_map = None
+                if len(_gene_id_list) == 1:
+                    _gid = _gene_id_list[0]
+                    rename_map = {
+                        "forward_primer_full_5to3": f"{_gid}_fw",
+                        "reverse_primer_full_5to3": f"{_gid}_rev",
+                    }
+                show_results(
+                    out_path, stderr,
+                    download_filename=download_name,
+                    rename_columns=rename_map,
+                )
 
 # ========================== DELETION =======================================
 with tab_deletion:
     st.caption(
-        "Designs four primers per gene (A, B, C, D) across two amplicons "
+        "Designs four primers per gene (AB_fwd, AB_rev, CD_fwd, CD_rev) across two amplicons "
         "for in-frame chromosomal deletion via HiFi assembly."
     )
 
@@ -658,7 +745,26 @@ with tab_deletion:
                 st.error(f"Script exited with code {rc}")
                 show_stderr(stderr)
             else:
-                show_results(out_path, stderr)
+                download_name = (
+                    f"deletion_{_safe_part(_plasmid_stem(plasmid_name, plasmid_upload))}"
+                    f"_{_safe_part(five_prime_enzyme)}_{_safe_part(three_prime_enzyme)}"
+                    f"_{_date_stamp()}.csv"
+                )
+                _gene_id_list = gene_ids.split()
+                rename_map = None
+                if len(_gene_id_list) == 1:
+                    _gid = _gene_id_list[0]
+                    rename_map = {
+                        "AB_fwd": f"{_gid}_AB_fwd",
+                        "AB_rev": f"{_gid}_AB_rev",
+                        "CD_fwd": f"{_gid}_CD_fwd",
+                        "CD_rev": f"{_gid}_CD_rev",
+                    }
+                show_results(
+                    out_path, stderr,
+                    download_filename=download_name,
+                    rename_columns=rename_map,
+                )
 
 # ========================== PROTEIN TAG ====================================
 with tab_tag:
@@ -711,11 +817,69 @@ with tab_tag:
         tag_options = ["Custom"]
 
     tag_label = "Linker + Tag" if terminus == "C" else "Tag + Linker"
-    col_tag, col_gene, _spacer_tag = st.columns([1, 1, 2])
+    col_tag, col_gene, _spacer_tag = st.columns([1, 2, 4])
     with col_tag:
         tag_choice = st.selectbox(tag_label, tag_options, key="tag_choice")
     with col_gene:
         gene_id = st.text_input("Gene ID (single, required)", value="", key="tag_gene_id")
+
+    _current_gene_ids = get_current_gene_ids(genes_file)
+    _valid_ids_json = json.dumps(list(_current_gene_ids))
+    st.components.v1.html(
+        f"""
+        <script>
+        (function() {{
+            const VALID = new Set({_valid_ids_json});
+            const STYLE_ID = 'tag-gene-id-validator-style';
+            const doc = window.parent.document;
+
+            if (!doc.getElementById(STYLE_ID)) {{
+                const style = doc.createElement('style');
+                style.id = STYLE_ID;
+                style.textContent = `
+                    .st-key-tag_gene_id.invalid-gene [data-baseweb="input"],
+                    .st-key-tag_gene_id.invalid-gene [data-baseweb="base-input"] {{
+                        border-color: rgb(255, 75, 75) !important;
+                    }}
+                    .st-key-tag_gene_id.invalid-gene label,
+                    .st-key-tag_gene_id.invalid-gene label p {{
+                        color: rgb(255, 75, 75) !important;
+                    }}
+                    .st-key-tag_gene_id.valid-gene [data-baseweb="input"],
+                    .st-key-tag_gene_id.valid-gene [data-baseweb="base-input"] {{
+                        border-color: rgba(49, 51, 63, 0.2) !important;
+                        box-shadow: none !important;
+                    }}
+                `;
+                doc.head.appendChild(style);
+            }}
+
+            function check(input) {{
+                const wrapper = input.closest('.st-key-tag_gene_id');
+                if (!wrapper) return;
+                if (VALID.has(input.value.trim())) {{
+                    wrapper.classList.remove('invalid-gene');
+                    wrapper.classList.add('valid-gene');
+                }} else {{
+                    wrapper.classList.remove('valid-gene');
+                    wrapper.classList.add('invalid-gene');
+                }}
+            }}
+
+            function attach() {{
+                const input = doc.querySelector('.st-key-tag_gene_id input');
+                if (!input) {{ setTimeout(attach, 100); return; }}
+                check(input);
+                if (input.dataset.geneValidatorAttached) return;
+                input.dataset.geneValidatorAttached = '1';
+                input.addEventListener('input', () => check(input));
+            }}
+            attach();
+        }})();
+        </script>
+        """,
+        height=0,
+    )
 
     tag_fasta_file = None
     if tag_choice == "Custom":
@@ -833,4 +997,12 @@ with tab_tag:
                     st.error(f"Script exited with code {rc}")
                     show_stderr(stderr)
                 else:
-                    show_results(out_path, stderr)
+                    if tag_choice == "Custom" and tag_fasta_file is not None:
+                        tag_label = Path(tag_fasta_file.name).stem
+                    else:
+                        tag_label = tag_choice
+                    download_name = (
+                        f"tag_{_safe_part(gene_id.strip())}_{terminus}term"
+                        f"_{_safe_part(tag_label)}_{_date_stamp()}.csv"
+                    )
+                    show_results(out_path, stderr, download_filename=download_name)
