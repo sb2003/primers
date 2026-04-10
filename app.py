@@ -1099,6 +1099,15 @@ with tab_tag:
                 fd, out_path = tempfile.mkstemp(suffix=".csv")
                 os.close(fd)
 
+                # Request assembly exports for circular plasmids
+                dna_path: str | None = None
+                gbk_path: str | None = None
+                if not linear_plasmid:
+                    dna_fd, dna_path = tempfile.mkstemp(suffix=".dna")
+                    os.close(dna_fd)
+                    gbk_fd, gbk_path = tempfile.mkstemp(suffix=".gbk")
+                    os.close(gbk_fd)
+
                 args = [
                     "--plasmid", plasmid_path,
                     "--genome", *genome_paths,
@@ -1118,6 +1127,10 @@ with tab_tag:
                     "--gc-clamp", str(gc_clamp),
                     "--gene-ids", gene_id.strip(),
                 ]
+                if dna_path:
+                    args.extend(["--dna-output", dna_path])
+                if gbk_path:
+                    args.extend(["--gbk-output", gbk_path])
                 if tag_choice == "Custom":
                     tag_path = save_uploaded(tag_fasta_file)
                     args.extend(["--tag", tag_path])
@@ -1142,4 +1155,43 @@ with tab_tag:
                         f"tag_{_safe_part(gene_id.strip())}_{terminus}term"
                         f"_{_safe_part(tag_label)}_{_date_stamp()}.csv"
                     )
-                    show_results(out_path, stderr, download_filename=download_name)
+
+                    _extra_downloads: list[dict] = []
+                    _gid = _safe_part(gene_id.strip())
+                    _plasmid_stem_str = _safe_part(_plasmid_stem(plasmid_name, plasmid_upload))
+                    if dna_path and Path(dna_path).exists() and Path(dna_path).stat().st_size > 0:
+                        dna_download_name = (
+                            f"{_plasmid_stem_str}"
+                            f"_t{_gid}_{terminus}term_{_safe_part(tag_label)}"
+                            f"_{_date_stamp()}.dna"
+                        )
+                        with open(dna_path, "rb") as _df:
+                            _dna_bytes = _df.read()
+                        _extra_downloads.append({
+                            "label": "Download SnapGene file (.dna)",
+                            "data": _dna_bytes,
+                            "file_name": dna_download_name,
+                            "mime": "application/octet-stream",
+                            "help": "Native SnapGene file — tag-fusion primers land in the Primers panel as proper arrows.",
+                        })
+                    if gbk_path and Path(gbk_path).exists() and Path(gbk_path).stat().st_size > 0:
+                        gbk_download_name = (
+                            f"{_plasmid_stem_str}"
+                            f"_t{_gid}_{terminus}term_{_safe_part(tag_label)}"
+                            f"_{_date_stamp()}.gbk"
+                        )
+                        with open(gbk_path, "rb") as _gf:
+                            _gbk_bytes = _gf.read()
+                        _extra_downloads.append({
+                            "label": "Download annotated GenBank (.gbk)",
+                            "data": _gbk_bytes,
+                            "file_name": gbk_download_name,
+                            "mime": "chemical/seq-na-genbank",
+                            "help": "Open in Benchling or any GenBank viewer to see the assembled tag-fusion plasmid.",
+                        })
+
+                    show_results(
+                        out_path, stderr,
+                        download_filename=download_name,
+                        extra_downloads=_extra_downloads,
+                    )

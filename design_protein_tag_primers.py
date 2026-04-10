@@ -53,6 +53,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
+from Bio import SeqIO as _SeqIO
+from Bio.Seq import Seq as _Seq
+from Bio.SeqFeature import (
+    FeatureLocation as _FeatureLocation,
+    SeqFeature as _SeqFeature,
+)
+from Bio.SeqRecord import SeqRecord as _SeqRecord
+
 from primer_utils import (
     GenomeMatch,
     calc_tm,
@@ -67,6 +75,12 @@ from primer_utils import (
     load_single_sequence,
     rc,
     select_cut,
+)
+
+from snapgene_dna_writer import (
+    DnaFeature as _DnaFeature,
+    DnaPrimer as _DnaPrimer,
+    write_dna_file as _write_dna_file,
 )
 
 
@@ -247,6 +261,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gene-ids", nargs="+", default=None,
                    help="Only design primers for these gene IDs (filtered from --genes FASTA). "
                         "Default: all genes.")
+    p.add_argument("--dna-output", default=None,
+                   help="Write a SnapGene .dna of the assembled tag-fusion plasmid. "
+                        "Only supported for circular plasmids.")
+    p.add_argument("--gbk-output", default=None,
+                   help="Write an annotated GenBank of the assembled tag-fusion plasmid. "
+                        "Only supported for circular plasmids.")
     return p.parse_args()
 
 
@@ -255,9 +275,9 @@ def parse_args() -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 
 def build_vector_tails(plasmid_seq: str, three_prime_enzyme, five_prime_enzyme,
-                       args: argparse.Namespace) -> Tuple[str, str]:
+                       args: argparse.Namespace) -> Tuple[str, str, int, int]:
     """
-    Return (three_prime_tail, five_prime_tail) for Primers A and D.
+    Return (three_prime_tail, five_prime_tail, three_prime0, five_prime0).
 
     three_prime_tail = sequence upstream of the 3' enzyme cut → prepended to Primer A (insert 5' end)
     five_prime_tail  = RC of sequence downstream of the 5' enzyme cut → prepended to Primer D (insert 3' end)
@@ -287,7 +307,7 @@ def build_vector_tails(plasmid_seq: str, three_prime_enzyme, five_prime_enzyme,
     three_prime_tail, _ = extract_upstream(plasmid_seq, three_prime0, args.overlap_length, args.circular_plasmid)
     five_prime_raw, _   = extract_downstream(plasmid_seq, five_prime_dn_start, args.overlap_length, args.circular_plasmid)
     five_prime_tail = rc(five_prime_raw)
-    return three_prime_tail, five_prime_tail
+    return three_prime_tail, five_prime_tail, three_prime0, five_prime0
 
 
 # ---------------------------------------------------------------------------
@@ -347,9 +367,9 @@ def extract_c_tag_context(
     genome_records: Sequence[Tuple[str, str]],
     match: GenomeMatch,
     flank: int,
-) -> Tuple[str, str, str]:
+) -> Tuple[str, str, str, int, int]:
     """
-    C-terminal: return (left_block, right_block, edge_note).
+    C-terminal: return (left_block, right_block, edge_note, upstream_len, gene_portion_len).
 
     left_block  = upstream flank + gene (minus stop)   (template for AB)
     right_block = downstream flank                     (template for CD)
@@ -388,16 +408,16 @@ def extract_c_tag_context(
         )
     if not has_stop:
         notes.append("gene does not end with a stop codon in the genome; used full matched length")
-    return left_block, right_block, ";".join(notes)
+    return left_block, right_block, ";".join(notes), len(upstream), len(gene_no_stop)
 
 
 def extract_n_tag_context(
     genome_records: Sequence[Tuple[str, str]],
     match: GenomeMatch,
     flank: int,
-) -> Tuple[str, str, str]:
+) -> Tuple[str, str, str, int, int]:
     """
-    N-terminal: return (left_block, right_block, edge_note).
+    N-terminal: return (left_block, right_block, edge_note, upstream_len, gene_portion_len).
 
     left_block  = upstream flank                       (template for AB)
     right_block = gene (with stop) + downstream flank  (template for CD)
@@ -416,7 +436,7 @@ def extract_n_tag_context(
         notes.append(
             "gene does not end with a stop codon — N-terminal fusion will have no stop"
         )
-    return left_block, right_block, ";".join(notes)
+    return left_block, right_block, ";".join(notes), len(upstream), len(gene_body)
 
 
 # ---------------------------------------------------------------------------
@@ -632,14 +652,19 @@ def design_tag_fusion(
     vector_three_prime_tail: str,
     vector_five_prime_tail: str,
     args: argparse.Namespace,
-) -> Tuple[List[Tuple[str, str, Optional[float]]], Tuple, List[str]]:
+) -> Tuple[List[Tuple[str, str, Optional[float]]], Tuple, List[str], Optional[str], Optional[str], Optional[TagPrimerResult], int, int]:
     """
     Design the 6 primers for an N- or C-terminal protein fusion.
 
-    Returns (primers, match_info, warnings) where:
+    Returns (primers, match_info, warnings, left_block, right_block, result,
+             upstream_len, gene_portion_len) where:
         primers    = list of (name, full_sequence, tm) tuples
         match_info = (contig, start_1based, end_1based, strand)
         warnings   = list of warning strings
+        left_block / right_block = genomic context blocks (None if gene not found)
+        result     = TagPrimerResult (None if gene not found)
+        upstream_len      = length of the upstream flank (0 if gene not found)
+        gene_portion_len  = length of the gene portion in the insert (0 if gene not found)
     """
     warnings: List[str] = []
     protein_part = _protein_name_from_tag(tag_name, terminus)
@@ -666,7 +691,7 @@ def design_tag_fusion(
             (name_cd_rev, "", None),
         ]
         match_info: Tuple = ("", "", "", "")
-        return primers, match_info, warnings
+        return primers, match_info, warnings, None, None, None, 0, 0
 
     if len(matches) > 1:
         loci = "; ".join(
@@ -682,7 +707,7 @@ def design_tag_fusion(
 
     match = matches[0]
     extract_fn = extract_c_tag_context if terminus == "C" else extract_n_tag_context
-    left_block, right_block, edge_note = extract_fn(
+    left_block, right_block, edge_note, upstream_len, gene_portion_len = extract_fn(
         genome_records, match, args.flank_length
     )
     if edge_note:
@@ -709,7 +734,333 @@ def design_tag_fusion(
         match.end_0based,
         match.strand,
     )
-    return primers, match_info, warnings
+    return primers, match_info, warnings, left_block, right_block, result, upstream_len, gene_portion_len
+
+
+# ---------------------------------------------------------------------------
+# Assembly export (.gbk / .dna)
+# ---------------------------------------------------------------------------
+
+def _build_tag_linearized(
+    plasmid_seq: str,
+    insert_seq: str,
+    three_prime0: int,
+    five_prime0: int,
+    five_prime_enzyme,
+    overlap_length: int,
+):
+    """Build the linearized tag-fusion plasmid.
+
+    The insert is ``left_block + tag_seq + right_block``. Same linearization
+    logic as the deletion script — the insert sits at the END of the record.
+
+    Returns (linearized_seq, insert_start0, insert_end0) or a string on error.
+    """
+    n = len(plasmid_seq)
+    if n == 0 or len(insert_seq) == 0:
+        return "empty plasmid or insert sequence"
+
+    plasmid_upper = plasmid_seq.upper()
+    insert_upper = insert_seq.upper()
+
+    five_prime_dn_offset = max(0, int(five_prime_enzyme.ovhg))
+    boundary_left = three_prime0
+    kept_continue = (five_prime0 - five_prime_dn_offset) % n
+
+    if boundary_left < kept_continue:
+        first_segment = plasmid_upper[:boundary_left]
+        last_segment = plasmid_upper[kept_continue:]
+        kept_length = len(first_segment) + len(last_segment)
+        if kept_length < 2 * overlap_length:
+            return "kept arc shorter than twice the overlap length"
+        linearized = last_segment + first_segment + insert_upper
+    else:
+        kept_arc = plasmid_upper[kept_continue:boundary_left]
+        if len(kept_arc) < 2 * overlap_length:
+            return "kept arc shorter than twice the overlap length"
+        linearized = kept_arc + insert_upper
+
+    total_length = len(linearized)
+    insert_length = len(insert_upper)
+    insert_start0 = total_length - insert_length
+    insert_end0 = total_length
+    return linearized, insert_start0, insert_end0
+
+
+def _gbk_safe_locus(gene_id: str, plasmid_id: str) -> str:
+    import re as _re
+    combined = f"t{gene_id}_{plasmid_id}"
+    sanitized = _re.sub(r"[^A-Za-z0-9_]", "_", combined)
+    if not sanitized:
+        sanitized = "assembled"
+    return sanitized[:16]
+
+
+def _tag_feature_regions(
+    terminus: str,
+    insert_start0: int,
+    insert_end0: int,
+    left_len: int,
+    tag_len: int,
+    upstream_len: int,
+    gene_portion_len: int,
+    gene_id: str,
+    tag_name: str,
+):
+    """Return a list of (label, start0, end0) for the insert features.
+
+    C-terminal insert: [upstream][gene_no_stop][tag][downstream]
+      → gene-AB, gene_no_stop, tag, gene-CD
+
+    N-terminal insert: [upstream][tag][gene_with_stop][downstream]
+      → gene-AB, tag, gene, gene-CD
+    """
+    if terminus == "C":
+        ab_s = insert_start0
+        ab_e = insert_start0 + upstream_len
+        gene_s = ab_e
+        gene_e = gene_s + gene_portion_len
+        tag_s = insert_start0 + left_len
+        tag_e = tag_s + tag_len
+        cd_s = tag_e
+        cd_e = insert_end0
+        gene_label = f"{gene_id}_no_stop"
+        return [
+            (f"{gene_id}-AB", ab_s, ab_e),
+            (gene_label, gene_s, gene_e),
+            (tag_name, tag_s, tag_e),
+            (f"{gene_id}-CD", cd_s, cd_e),
+        ]
+    else:
+        ab_s = insert_start0
+        ab_e = insert_start0 + left_len  # left_block = upstream
+        tag_s = ab_e
+        tag_e = tag_s + tag_len
+        gene_s = tag_e
+        gene_e = gene_s + gene_portion_len
+        cd_s = gene_e
+        cd_e = insert_end0
+        return [
+            (f"{gene_id}-AB", ab_s, ab_e),
+            (tag_name, tag_s, tag_e),
+            (gene_id, gene_s, gene_e),
+            (f"{gene_id}-CD", cd_s, cd_e),
+        ]
+
+
+def write_tag_assembly_gbk(
+    output_path: Path,
+    plasmid_id: str,
+    plasmid_seq: str,
+    gene_id: str,
+    tag_name: str,
+    terminus: str,
+    left_block: str,
+    tag_seq: str,
+    right_block: str,
+    upstream_len: int,
+    gene_portion_len: int,
+    three_prime0: int,
+    five_prime0: int,
+    five_prime_enzyme,
+    overlap_length: int,
+    circular_plasmid: bool,
+) -> Optional[str]:
+    """Write an annotated GenBank of the assembled tag-fusion plasmid."""
+    if not circular_plasmid:
+        return "tag .gbk output only supported for circular plasmids"
+
+    insert_seq = left_block + tag_seq + right_block
+    built = _build_tag_linearized(
+        plasmid_seq, insert_seq, three_prime0, five_prime0,
+        five_prime_enzyme, overlap_length,
+    )
+    if isinstance(built, str):
+        return built
+    linearized, insert_start0, insert_end0 = built
+    total_length = len(linearized)
+    left_len = len(left_block)
+    tag_len = len(tag_seq)
+
+    locus_name = _gbk_safe_locus(gene_id, plasmid_id)
+    record = _SeqRecord(
+        _Seq(linearized),
+        id=locus_name,
+        name=locus_name,
+        description=f"{gene_id} tag fusion into {plasmid_id}",
+        annotations={
+            "molecule_type": "DNA",
+            "topology": "circular",
+            "organism": "synthetic construct",
+            "source": "synthetic construct",
+        },
+    )
+
+    record.features.append(_SeqFeature(
+        _FeatureLocation(0, total_length, strand=+1),
+        type="source",
+        qualifiers={
+            "organism": ["synthetic construct"],
+            "mol_type": ["other DNA"],
+        },
+    ))
+
+    for label, s, e in _tag_feature_regions(
+        terminus, insert_start0, insert_end0, left_len, tag_len,
+        upstream_len, gene_portion_len, gene_id, tag_name,
+    ):
+        record.features.append(_SeqFeature(
+            _FeatureLocation(s, e, strand=+1),
+            type="misc_feature",
+            qualifiers={"label": [label], "note": [label]},
+        ))
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w") as fh:
+        _SeqIO.write([record], fh, "genbank")
+
+    return None
+
+
+def write_tag_assembly_dna(
+    output_path: Path,
+    plasmid_seq: str,
+    gene_id: str,
+    tag_name: str,
+    terminus: str,
+    left_block: str,
+    tag_seq: str,
+    right_block: str,
+    upstream_len: int,
+    gene_portion_len: int,
+    result: TagPrimerResult,
+    three_prime0: int,
+    five_prime0: int,
+    five_prime_enzyme,
+    overlap_length: int,
+    circular_plasmid: bool,
+) -> Optional[str]:
+    """Write a SnapGene .dna of the assembled tag-fusion plasmid.
+
+    Emits the six primers (AB, LT, CD) as entries in SnapGene's Primers panel.
+    Four features: {gene_id}-AB, {gene_id}_no_stop (or {gene_id}), {tag_name}, {gene_id}-CD.
+    """
+    if not circular_plasmid:
+        return "tag .dna output only supported for circular plasmids"
+
+    insert_seq = left_block + tag_seq + right_block
+    built = _build_tag_linearized(
+        plasmid_seq, insert_seq, three_prime0, five_prime0,
+        five_prime_enzyme, overlap_length,
+    )
+    if isinstance(built, str):
+        return built
+    linearized, insert_start0, insert_end0 = built
+
+    left_len = len(left_block)
+    tag_len = len(tag_seq)
+
+    _COLORS = {
+        "flank": "#ff0000",
+        "gene": "#f5c242",
+        "tag": "#00cc00",
+    }
+
+    regions = _tag_feature_regions(
+        terminus, insert_start0, insert_end0, left_len, tag_len,
+        upstream_len, gene_portion_len, gene_id, tag_name,
+    )
+    features = []
+    for label, s, e in regions:
+        if label == tag_name:
+            color = _COLORS["tag"]
+        elif label.endswith("-AB") or label.endswith("-CD"):
+            color = _COLORS["flank"]
+        else:
+            color = _COLORS["gene"]
+        features.append(_DnaFeature(
+            name=label, start0=s, end0=e,
+            type="misc_feature", directionality="0", color=color,
+        ))
+
+    # Primer binding footprints — positions relative to left_block / tag / right_block
+    left_start0 = insert_start0
+    left_end0 = insert_start0 + left_len
+    tag_start0 = left_end0
+    tag_end0 = tag_start0 + tag_len
+    right_start0 = tag_end0
+
+    # AB primers bind on left_block
+    ab_fwd_start0 = left_start0
+    ab_fwd_end0 = left_start0 + len(result.bind_ab_fwd)
+    ab_rev_start0 = left_end0 - len(result.bind_ab_rev)
+    ab_rev_end0 = left_end0
+
+    # LT primers bind on tag_seq
+    lt_fwd_start0 = tag_start0
+    lt_fwd_end0 = tag_start0 + len(result.bind_lt_fwd)
+    lt_rev_start0 = tag_end0 - len(result.bind_lt_rev)
+    lt_rev_end0 = tag_end0
+
+    # CD primers bind on right_block
+    cd_fwd_start0 = right_start0
+    cd_fwd_end0 = right_start0 + len(result.bind_cd_fwd)
+    cd_rev_start0 = insert_end0 - len(result.bind_cd_rev)
+    cd_rev_end0 = insert_end0
+
+    primers = [
+        _DnaPrimer(
+            name=f"{gene_id}_AB_fwd",
+            full_seq=result.full_ab_fwd, binding=result.bind_ab_fwd,
+            tail=result.tail_ab_fwd,
+            bind_start0=ab_fwd_start0, bind_end0=ab_fwd_end0,
+            strand=+1, tm=result.tm_ab_fwd,
+        ),
+        _DnaPrimer(
+            name=f"{gene_id}_AB_rev",
+            full_seq=result.full_ab_rev, binding=result.bind_ab_rev,
+            tail=result.tail_ab_rev,
+            bind_start0=ab_rev_start0, bind_end0=ab_rev_end0,
+            strand=-1, tm=result.tm_ab_rev,
+        ),
+        _DnaPrimer(
+            name=f"LT_{tag_name}_fwd",
+            full_seq=result.full_lt_fwd, binding=result.bind_lt_fwd,
+            tail=result.tail_lt_fwd,
+            bind_start0=lt_fwd_start0, bind_end0=lt_fwd_end0,
+            strand=+1, tm=result.tm_lt_fwd,
+        ),
+        _DnaPrimer(
+            name=f"LT_{tag_name}_rev",
+            full_seq=result.full_lt_rev, binding=result.bind_lt_rev,
+            tail=result.tail_lt_rev,
+            bind_start0=lt_rev_start0, bind_end0=lt_rev_end0,
+            strand=-1, tm=result.tm_lt_rev,
+        ),
+        _DnaPrimer(
+            name=f"{gene_id}_CD_fwd",
+            full_seq=result.full_cd_fwd, binding=result.bind_cd_fwd,
+            tail=result.tail_cd_fwd,
+            bind_start0=cd_fwd_start0, bind_end0=cd_fwd_end0,
+            strand=+1, tm=result.tm_cd_fwd,
+        ),
+        _DnaPrimer(
+            name=f"{gene_id}_CD_rev",
+            full_seq=result.full_cd_rev, binding=result.bind_cd_rev,
+            tail=result.tail_cd_rev,
+            bind_start0=cd_rev_start0, bind_end0=cd_rev_end0,
+            strand=-1, tm=result.tm_cd_rev,
+        ),
+    ]
+
+    _write_dna_file(
+        output_path=output_path,
+        sequence=linearized,
+        circular=True,
+        features=features,
+        primers=primers,
+    )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -731,10 +1082,10 @@ def main() -> int:
     tag_name, tag_seq = resolve_tag(args.tag, args.terminus)
     check_tag_constants(tag_name, tag_seq, args.terminus)
 
-    _plasmid_id, plasmid_seq = load_single_sequence(args.plasmid)
+    plasmid_id, plasmid_seq = load_single_sequence(args.plasmid)
     three_prime_enzyme = get_enzyme(args.three_prime_enzyme)
     five_prime_enzyme  = get_enzyme(args.five_prime_enzyme)
-    vector_three_prime_tail, vector_five_prime_tail = build_vector_tails(
+    vector_three_prime_tail, vector_five_prime_tail, three_prime0, five_prime0 = build_vector_tails(
         plasmid_seq, three_prime_enzyme, five_prime_enzyme, args
     )
 
@@ -753,7 +1104,7 @@ def main() -> int:
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    primers, match_info, warnings = design_tag_fusion(
+    primers, match_info, warnings, left_block, right_block, tag_result, upstream_len, gene_portion_len = design_tag_fusion(
         gene_id, gene_seq, tag_name, tag_seq, args.terminus,
         genome_records, contig_to_file,
         vector_three_prime_tail, vector_five_prime_tail,
@@ -805,6 +1156,52 @@ def main() -> int:
                 "", "", round(avg_tm, 2), "",
                 "", "", "", "", "", "", "", "", "",
             ])
+
+    # Assembly exports (only when gene was found)
+    if left_block is not None and tag_result is not None:
+        if args.gbk_output:
+            gbk_warning = write_tag_assembly_gbk(
+                Path(args.gbk_output),
+                plasmid_id=plasmid_id,
+                plasmid_seq=plasmid_seq,
+                gene_id=gene_id,
+                tag_name=tag_name,
+                terminus=args.terminus,
+                left_block=left_block,
+                tag_seq=tag_seq,
+                right_block=right_block,
+                upstream_len=upstream_len,
+                gene_portion_len=gene_portion_len,
+                three_prime0=three_prime0,
+                five_prime0=five_prime0,
+                five_prime_enzyme=five_prime_enzyme,
+                overlap_length=args.overlap_length,
+                circular_plasmid=args.circular_plasmid,
+            )
+            if gbk_warning:
+                print(f"GenBank output skipped: {gbk_warning}", file=sys.stderr)
+
+        if args.dna_output:
+            dna_warning = write_tag_assembly_dna(
+                Path(args.dna_output),
+                plasmid_seq=plasmid_seq,
+                gene_id=gene_id,
+                tag_name=tag_name,
+                terminus=args.terminus,
+                left_block=left_block,
+                tag_seq=tag_seq,
+                right_block=right_block,
+                upstream_len=upstream_len,
+                gene_portion_len=gene_portion_len,
+                result=tag_result,
+                three_prime0=three_prime0,
+                five_prime0=five_prime0,
+                five_prime_enzyme=five_prime_enzyme,
+                overlap_length=args.overlap_length,
+                circular_plasmid=args.circular_plasmid,
+            )
+            if dna_warning:
+                print(f"SnapGene .dna output skipped: {dna_warning}", file=sys.stderr)
 
     print(f"Done. Wrote primers for {gene_id} to {out_path}", file=sys.stderr)
     return 0
