@@ -128,11 +128,18 @@ def enzyme_cut_positions_0based(enzyme, seq: str, circular: bool) -> List[int]:
     return sorted({int(hit) - 1 for hit in enzyme.search(Seq(seq), linear=not circular)})
 
 
-def select_cut(cuts: Sequence[int], idx: int, enzyme_name: str) -> int:
+def select_cut(cuts: Sequence[int], idx: int, enzyme_name: str) -> Optional[int]:
+    """Return the cut position, or None if the enzyme doesn't cut / index is bad.
+
+    Errors are printed to stderr (prefixed with "Error:") so the Streamlit app
+    can display them. Callers should check for None and abort gracefully.
+    """
     if not cuts:
-        raise ValueError(f"{enzyme_name} does not cut the plasmid")
+        print(f"Error: {enzyme_name} does not cut the plasmid", file=sys.stderr)
+        return None
     if idx < 0 or idx >= len(cuts):
-        raise ValueError(f"{enzyme_name} cut index {idx} is out of range; plasmid has {len(cuts)} cut(s)")
+        print(f"Error: {enzyme_name} cut index {idx} is out of range; plasmid has {len(cuts)} cut(s)", file=sys.stderr)
+        return None
     return cuts[idx]
 
 

@@ -174,6 +174,8 @@ def build_vector_tails(plasmid_seq: str, three_prime_enzyme, five_prime_enzyme,
     five_prime_cuts  = enzyme_cut_positions_0based(five_prime_enzyme,  plasmid_seq, args.circular_plasmid)
     three_prime0 = select_cut(three_prime_cuts, args.three_prime_cut_index, args.three_prime_enzyme)
     five_prime0  = select_cut(five_prime_cuts,  args.five_prime_cut_index,  args.five_prime_enzyme)
+    if three_prime0 is None or five_prime0 is None:
+        raise SystemExit(1)
 
     if three_prime0 == five_prime0:
         raise ValueError(
@@ -395,7 +397,7 @@ def _build_deletion_linearized(
 def _gbk_safe_locus(gene_id: str, plasmid_id: str) -> str:
     """Return a LOCUS name that is safe for GenBank output (<=16 chars, alnum+underscore)."""
     import re as _re
-    combined = f"del_{gene_id}_{plasmid_id}"
+    combined = f"d{gene_id}_{plasmid_id}"
     sanitized = _re.sub(r"[^A-Za-z0-9_]", "_", combined)
     if not sanitized:
         sanitized = "assembled"
@@ -502,7 +504,7 @@ def write_deletion_assembly_dna(
     Emits the four deletion primers (A/B forward+reverse across the left
     amplicon, C/D forward+reverse across the right amplicon) as entries in
     SnapGene's Primers panel. The deletion insert (left_block + right_block)
-    is rendered as a gray block feature labelled ``Δ{gene_id}``.
+    is rendered as two red block features labelled ``{gene_id}_AB`` and ``{gene_id}_CD``.
 
     Only supported for circular plasmids — linear plasmids return a warning
     and are silently skipped by the caller.

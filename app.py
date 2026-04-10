@@ -867,7 +867,7 @@ with tab_deletion:
                 if dna_path and Path(dna_path).exists() and Path(dna_path).stat().st_size > 0:
                     dna_download_name = (
                         f"{_safe_part(_plasmid_stem(plasmid_name, plasmid_upload))}"
-                        f"_delta_{_safe_part(_gene_id_list[0])}"
+                        f"_d{_safe_part(_gene_id_list[0])}"
                         f"_{_date_stamp()}.dna"
                     )
                     with open(dna_path, "rb") as _df:
@@ -882,7 +882,7 @@ with tab_deletion:
                 if gbk_path and Path(gbk_path).exists() and Path(gbk_path).stat().st_size > 0:
                     gbk_download_name = (
                         f"{_safe_part(_plasmid_stem(plasmid_name, plasmid_upload))}"
-                        f"_delta_{_safe_part(_gene_id_list[0])}"
+                        f"_d{_safe_part(_gene_id_list[0])}"
                         f"_{_date_stamp()}.gbk"
                     )
                     with open(gbk_path, "rb") as _gf:

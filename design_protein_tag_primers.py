@@ -273,6 +273,8 @@ def build_vector_tails(plasmid_seq: str, three_prime_enzyme, five_prime_enzyme,
     five_prime_cuts  = enzyme_cut_positions_0based(five_prime_enzyme,  plasmid_seq, args.circular_plasmid)
     three_prime0 = select_cut(three_prime_cuts, args.three_prime_cut_index, args.three_prime_enzyme)
     five_prime0  = select_cut(five_prime_cuts,  args.five_prime_cut_index,  args.five_prime_enzyme)
+    if three_prime0 is None or five_prime0 is None:
+        raise SystemExit(1)
 
     if three_prime0 == five_prime0:
         raise ValueError(
