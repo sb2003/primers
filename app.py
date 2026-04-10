@@ -351,6 +351,11 @@ def show_results(
         # so the formatters below use try/except to handle both numbers and
         # blanks / non-numeric labels (like the protein-tag "Avg" row).
         df = df.fillna("")
+        # After fillna(""), columns with mixed numeric/blank values become
+        # object dtype which Arrow can't serialize. Cast everything to string
+        # so st.dataframe doesn't hit ArrowTypeError.
+        df = df.astype(str)
+        df = df.replace("", "")  # keep blanks as empty strings
         if rename_columns:
             df = df.rename(columns=rename_columns)
 
@@ -387,7 +392,7 @@ def show_results(
                 {"selector": "td", "props": [("white-space", "nowrap")]},
             ])
         )
-        st.dataframe(styled, hide_index=True, use_container_width=True)
+        st.dataframe(styled, hide_index=True, width="stretch")
     except Exception:
         st.code(raw)
 
