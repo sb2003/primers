@@ -956,7 +956,7 @@ with tab_tag:
 
     _current_gene_ids = get_current_gene_ids(genes_file)
     _valid_ids_json = json.dumps(list(_current_gene_ids))
-    st.components.v1.html(
+    st.html(
         f"""
         <script>
         (function() {{
@@ -1009,7 +1009,6 @@ with tab_tag:
         }})();
         </script>
         """,
-        height=0,
     )
 
     tag_fasta_file = None

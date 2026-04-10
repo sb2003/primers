@@ -154,8 +154,8 @@ python design_deletion_primers.py \
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `--three-prime-enzyme` | required | Enzyme at the vector backbone's 3' end (insert 5' end, Primer A side). For pGP704sacB + NcoI/SacI, this is NcoI. |
-| `--five-prime-enzyme` | required | Enzyme at the vector backbone's 5' end (insert 3' end, Primer D side). For pGP704sacB + NcoI/SacI, this is SacI. |
+| `--three-prime-enzyme` | required | Enzyme at the vector backbone's 3' end (insert 5' end, Primer A side) |
+| `--five-prime-enzyme` | required | Enzyme at the vector backbone's 5' end (insert 3' end, Primer D side) |
 | `--flank-length` | auto | Override auto-scaling: set a fixed amplicon length (outside bp + 9 bp into gene) |
 | `--overlap-length` | 20 | Length (bp) of the vector overlap tail on Primers A and D |
 | `--junction-overlap` | 10 | Length (bp) of the AB-to-CD junction overlap tail on Primers B and C |
@@ -206,7 +206,7 @@ Tag structure: `[linker][protein][stop]`. The linker sits at the 5' end of the t
 
 ```
 Final assembled insert (top strand, 5' → 3'):
-  [vector_L] [upstream flank] [gene - stop] [linker] [protein] [stop] [downstream flank] [vector_R]
+  [vector_L] [upstream flank] [nonstop gene] [linker] [protein] [stop] [downstream flank] [vector_R]
                                             └───────── tag ─────────┘
 
 Fusion protein (N → C):
