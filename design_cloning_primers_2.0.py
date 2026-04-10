@@ -40,6 +40,20 @@ from typing import List, Optional, Sequence, Tuple
 
 from tqdm import tqdm
 
+from Bio import SeqIO as _SeqIO
+from Bio.Seq import Seq as _Seq
+from Bio.SeqFeature import (
+    FeatureLocation as _FeatureLocation,
+    SeqFeature as _SeqFeature,
+)
+from Bio.SeqRecord import SeqRecord as _SeqRecord
+
+from snapgene_dna_writer import (
+    DnaFeature as _DnaFeature,
+    DnaPrimer as _DnaPrimer,
+    write_dna_file as _write_dna_file,
+)
+
 from primer_utils import (
     GenomeMatch,
     extract_downstream,
@@ -131,6 +145,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gene-ids", nargs="+", default=None,
                    help="Only design primers for these gene IDs (filtered from --genes FASTA). "
                         "Default: all genes.")
+    p.add_argument("--gbk-output", default=None,
+                   help="Write an annotated GenBank of the assembled plasmid. "
+                        "Only applied when exactly one gene was processed successfully; "
+                        "silently skipped otherwise.")
+    p.add_argument("--dna-output", default=None,
+                   help="Write a SnapGene .dna of the assembled plasmid, with the "
+                        "forward/reverse primers landing in SnapGene's Primers panel "
+                        "as proper primer arrows. Only applied when exactly one gene "
+                        "was processed successfully; silently skipped otherwise.")
     return p.parse_args()
 
 
@@ -305,6 +328,264 @@ def manual_fallback(gene_seq: str, forward_tail: str, reverse_tail: str, args: a
     return best
 
 
+def _gbk_safe_locus(gene_id: str, plasmid_id: str) -> str:
+    """Return a LOCUS name that is safe for GenBank output (<=16 chars, alnum+underscore)."""
+    import re as _re
+    combined = f"{gene_id}_{plasmid_id}"
+    sanitized = _re.sub(r"[^A-Za-z0-9_]", "_", combined)
+    if not sanitized:
+        sanitized = "assembled"
+    return sanitized[:16]
+
+
+def _linearize_assembly(
+    plasmid_seq: str,
+    gene_seq: str,
+    three_prime0: int,
+    five_prime0: int,
+    resolved_mode: str,
+    three_prime_enzyme,
+    five_prime_enzyme,
+    overlap_length: int,
+):
+    """Build the linearized assembled-plasmid sequence for a single gene.
+
+    Returns (linearized_seq, gene_start0, gene_end0) on success, or a string
+    explaining why the assembly couldn't be built. The record is oriented so
+    the gene insert sits at the END of the linearized sequence — the new
+    origin (position 1) is the base immediately after the gene.
+    """
+    if resolved_mode not in ("three_to_five", "five_to_three", "single_cut_circular"):
+        return f"unsupported resolved mode '{resolved_mode}'"
+
+    n = len(plasmid_seq)
+    if n == 0 or len(gene_seq) == 0:
+        return "empty plasmid or gene sequence"
+
+    plasmid_upper = plasmid_seq.upper()
+    gene_upper = gene_seq.upper()
+
+    # Determine the two top-strand positions that bracket the replaced arc.
+    #   boundary_left  = last kept base on the 3' side of the insert (exclusive)
+    #   kept_continue  = first kept base on the 5' side of the insert (inclusive)
+    if resolved_mode == "three_to_five":
+        five_prime_dn_offset = max(0, int(five_prime_enzyme.ovhg))
+        boundary_left = three_prime0
+        kept_continue = (five_prime0 - five_prime_dn_offset) % n
+    elif resolved_mode == "five_to_three":
+        three_prime_dn_offset = max(0, int(three_prime_enzyme.ovhg))
+        boundary_left = five_prime0
+        kept_continue = (three_prime0 - three_prime_dn_offset) % n
+    else:  # single_cut_circular
+        site_start0 = three_prime0 - int(three_prime_enzyme.fst5)
+        site_end0 = site_start0 + len(three_prime_enzyme.site)
+        boundary_left = three_prime0
+        kept_continue = (site_end0 - 1) % n
+
+    # Build the kept-backbone + gene layout so the gene sits at the END of
+    # the record (the new origin is the base immediately after the insert).
+    #
+    #   boundary_left  = exclusive upper bound of the pre-insert backbone slice
+    #   kept_continue  = inclusive lower bound of the post-insert backbone slice
+    #
+    # When boundary_left < kept_continue the replaced arc is a single
+    # contiguous span of the plasmid that does NOT cross the plasmid origin,
+    # so the kept backbone is the concatenation plasmid[:boundary_left] +
+    # plasmid[kept_continue:]. We place the post-insert slice first so the
+    # record reads: [downstream backbone][upstream backbone][gene].
+    # Otherwise the replaced arc wraps the plasmid origin; the kept backbone
+    # is already a single contiguous slice plasmid[kept_continue:boundary_left].
+    if boundary_left < kept_continue:
+        first_segment = plasmid_upper[:boundary_left]
+        last_segment = plasmid_upper[kept_continue:]
+        kept_length = len(first_segment) + len(last_segment)
+        if kept_length < 2 * overlap_length:
+            return "kept arc shorter than twice the overlap length"
+        linearized = last_segment + first_segment + gene_upper
+    else:
+        kept_arc = plasmid_upper[kept_continue:boundary_left]
+        if len(kept_arc) < 2 * overlap_length:
+            return "kept arc shorter than twice the overlap length"
+        linearized = kept_arc + gene_upper
+
+    total_length = len(linearized)
+    gene_length = len(gene_upper)
+    gene_start0 = total_length - gene_length
+    gene_end0 = total_length
+    return linearized, gene_start0, gene_end0
+
+
+def write_assembled_genbank(
+    output_path: Path,
+    plasmid_id: str,
+    plasmid_seq: str,
+    gene_id: str,
+    gene_seq: str,
+    design: PrimerDesignResult,
+    three_prime0: int,
+    five_prime0: int,
+    resolved_mode: str,
+    three_prime_enzyme,
+    five_prime_enzyme,
+    overlap_length: int,
+) -> Optional[str]:
+    """Write an annotated GenBank of the assembled plasmid for a single gene.
+
+    The linearized record is oriented so the gene insert sits at the end of
+    the record — i.e. the new origin (position 1) is the base immediately
+    after the gene. Only the source and gene features are written; primers
+    are NOT annotated here (SnapGene will not render a GenBank primer_bind
+    feature as a Primers-panel entry, so we leave the .gbk primer-free and
+    handle primers through the .dna writer instead).
+
+    Returns None on success, or a string explaining why the file was not written.
+    """
+    result = _linearize_assembly(
+        plasmid_seq, gene_seq, three_prime0, five_prime0, resolved_mode,
+        three_prime_enzyme, five_prime_enzyme, overlap_length,
+    )
+    if isinstance(result, str):
+        return result
+    linearized, gene_start, gene_end = result
+    total_length = len(linearized)
+
+    locus_name = _gbk_safe_locus(gene_id, plasmid_id)
+    record = _SeqRecord(
+        _Seq(linearized),
+        id=locus_name,
+        name=locus_name,
+        description=f"{gene_id} cloned into {plasmid_id}",
+        annotations={
+            "molecule_type": "DNA",
+            "topology": "circular",
+            "organism": "synthetic construct",
+            "source": "synthetic construct",
+        },
+    )
+
+    record.features.append(_SeqFeature(
+        _FeatureLocation(0, total_length, strand=+1),
+        type="source",
+        qualifiers={
+            "organism": ["synthetic construct"],
+            "mol_type": ["other DNA"],
+        },
+    ))
+
+    record.features.append(_SeqFeature(
+        _FeatureLocation(gene_start, gene_end, strand=+1),
+        type="gene",
+        qualifiers={"gene": [gene_id], "label": [gene_id]},
+    ))
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w") as fh:
+        _SeqIO.write([record], fh, "genbank")
+
+    return None
+
+
+def _split_tail_binding(full_primer: str) -> Tuple[str, str]:
+    """Split a CSV-style primer into its (tail, binding) halves.
+
+    Our convention writes the tail lowercase and the binding region uppercase,
+    so we can split at the first uppercase character.
+    """
+    j = 0
+    while j < len(full_primer) and full_primer[j].islower():
+        j += 1
+    return full_primer[:j], full_primer[j:]
+
+
+def write_assembled_dna(
+    output_path: Path,
+    plasmid_id: str,
+    plasmid_seq: str,
+    gene_id: str,
+    gene_seq: str,
+    design: PrimerDesignResult,
+    three_prime0: int,
+    five_prime0: int,
+    resolved_mode: str,
+    three_prime_enzyme,
+    five_prime_enzyme,
+    overlap_length: int,
+) -> Optional[str]:
+    """Write a SnapGene .dna of the assembled plasmid for a single gene.
+
+    Same layout as ``write_assembled_genbank`` (gene at the end of the record,
+    origin immediately after the insert), but emits a native SnapGene binary
+    file with the forward/reverse primers landing in SnapGene's Primers panel
+    as proper primer arrows — see ``snapgene_dna_writer`` for format details.
+
+    Returns None on success, or a string explaining why the file was not written.
+    """
+    result = _linearize_assembly(
+        plasmid_seq, gene_seq, three_prime0, five_prime0, resolved_mode,
+        three_prime_enzyme, five_prime_enzyme, overlap_length,
+    )
+    if isinstance(result, str):
+        return result
+    linearized, gene_start, gene_end = result
+
+    fw_tail, fw_bind = _split_tail_binding(design.forward_full)
+    rv_tail, rv_bind = _split_tail_binding(design.reverse_full)
+
+    # Binding footprints on the top strand. Forward primer's binding region
+    # equals the top strand at the gene's 5' end; reverse primer's binding
+    # region is the RC of the top strand at the gene's 3' end.
+    fw_start0 = gene_start
+    fw_end0 = gene_start + len(fw_bind)
+    rv_start0 = gene_end - len(rv_bind)
+    rv_end0 = gene_end
+
+    features = [
+        # Use type="misc_feature" (with no directionality) so SnapGene renders
+        # the insert as a block rather than an arrow. Feature types like
+        # "gene", "CDS", and "promoter" are inherently directional in SnapGene
+        # and always render as arrows, even with directionality omitted.
+        _DnaFeature(
+            name=gene_id,
+            start0=gene_start,
+            end0=gene_end,
+            type="misc_feature",
+            directionality="0",
+            color="#a5acb4",
+        )
+    ]
+    primers = [
+        _DnaPrimer(
+            name=f"{gene_id}_fwd",
+            full_seq=design.forward_full,
+            binding=fw_bind,
+            tail=fw_tail,
+            bind_start0=fw_start0,
+            bind_end0=fw_end0,
+            strand=+1,
+            tm=design.forward_tm,
+        ),
+        _DnaPrimer(
+            name=f"{gene_id}_rev",
+            full_seq=design.reverse_full,
+            binding=rv_bind,
+            tail=rv_tail,
+            bind_start0=rv_start0,
+            bind_end0=rv_end0,
+            strand=-1,
+            tm=design.reverse_tm,
+        ),
+    ]
+
+    _write_dna_file(
+        output_path=output_path,
+        sequence=linearized,
+        circular=True,
+        features=features,
+        primers=primers,
+    )
+    return None
+
+
 def main() -> int:
     args = parse_args()
     plasmid_id, plasmid_seq = load_single_sequence(args.plasmid)
@@ -328,6 +609,7 @@ def main() -> int:
     written = 0
     skipped = 0
     failed = 0
+    last_success: Optional[Tuple[str, str, PrimerDesignResult]] = None
 
     with out_path.open("w", newline="") as fh:
         writer = csv.writer(fh)
@@ -397,9 +679,60 @@ def main() -> int:
                     args.tail_mode,
                 ])
                 written += 1
+                last_success = (gene_id, gene_seq, design)
             except Exception as exc:
                 failed += 1
                 tqdm.write(f"[ERROR] gene {gene_id}: {exc}")
+
+    if args.gbk_output:
+        if written == 1 and last_success is not None:
+            gbk_gene_id, gbk_gene_seq, gbk_design = last_success
+            gbk_warning = write_assembled_genbank(
+                Path(args.gbk_output),
+                plasmid_id=plasmid_id,
+                plasmid_seq=plasmid_seq,
+                gene_id=gbk_gene_id,
+                gene_seq=gbk_gene_seq,
+                design=gbk_design,
+                three_prime0=three_prime0,
+                five_prime0=five_prime0,
+                resolved_mode=resolved_mode,
+                three_prime_enzyme=three_prime_enzyme,
+                five_prime_enzyme=five_prime_enzyme,
+                overlap_length=args.overlap_length,
+            )
+            if gbk_warning:
+                print(f"GenBank output skipped: {gbk_warning}", file=sys.stderr)
+        else:
+            print(
+                f"GenBank output skipped: expected exactly 1 written gene, got {written}",
+                file=sys.stderr,
+            )
+
+    if args.dna_output:
+        if written == 1 and last_success is not None:
+            dna_gene_id, dna_gene_seq, dna_design = last_success
+            dna_warning = write_assembled_dna(
+                Path(args.dna_output),
+                plasmid_id=plasmid_id,
+                plasmid_seq=plasmid_seq,
+                gene_id=dna_gene_id,
+                gene_seq=dna_gene_seq,
+                design=dna_design,
+                three_prime0=three_prime0,
+                five_prime0=five_prime0,
+                resolved_mode=resolved_mode,
+                three_prime_enzyme=three_prime_enzyme,
+                five_prime_enzyme=five_prime_enzyme,
+                overlap_length=args.overlap_length,
+            )
+            if dna_warning:
+                print(f"SnapGene .dna output skipped: {dna_warning}", file=sys.stderr)
+        else:
+            print(
+                f"SnapGene .dna output skipped: expected exactly 1 written gene, got {written}",
+                file=sys.stderr,
+            )
 
     print(
         f"Done. Processed {len(genes)} genes across {len(genome_records)} genome record(s) from {len(args.genome)} file(s) | "

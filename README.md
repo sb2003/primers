@@ -40,6 +40,7 @@ Designs primers to amplify each gene for insertion into a vector using HiFi asse
 - Adds 5' tails derived from plasmid overlap sequences or restriction sites.
 - Calculates Tm using the SantaLucia nearest-neighbor method (calibrated to approximate NEBuilder values).
 - Writes a CSV with full primers, average Tm, and per-primer Tm values.
+- Optionally exports a SnapGene `.dna` file and annotated GenBank `.gbk` of the assembled plasmid (single-gene runs only).
 - Warns if the chosen enzymes cut the insert or are not unique in the plasmid.
 
 ### Example
@@ -72,6 +73,8 @@ Enzymes are labeled using the NEBuilder convention — the `--three-prime-enzyme
 | `--gc-clamp` | 1 | Minimum G/C bases required at the 3' end of each primer |
 | `--mv-conc` | 500.0 | Monovalent salt concentration (mM) used for Tm calculation |
 | `--gene-ids` | *(all)* | Space-separated list of gene IDs to process; see [Running on a subset of genes](#running-on-a-subset-of-genes) |
+| `--dna-output` | *(none)* | Write a SnapGene `.dna` file of the assembled plasmid (single-gene runs only) |
+| `--gbk-output` | *(none)* | Write an annotated GenBank `.gbk` of the assembled plasmid (single-gene runs only) |
 
 ### Output columns
 
@@ -130,6 +133,7 @@ Primer A →[────────── upstream 500 bp ──────�
 - Primer B and C carry 5' junction overlap tails (so the two amplicons overlap each other for HiFi stitching).
 - Tails are lowercase; gene-binding regions are uppercase in the output.
 - Tm values are reported for the binding region only.
+- Optionally exports a SnapGene `.dna` file and annotated GenBank `.gbk` of the assembled deletion plasmid (single-gene runs only).
 - Genes on the minus strand are handled by reverse-complementing the full context, so primer design is always in the gene-reading direction.
 
 ### Example
@@ -159,6 +163,8 @@ python design_deletion_primers.py \
 | `--gc-clamp` | 1 | Minimum G/C bases required at the 3' end of each primer |
 | `--mv-conc` | 500.0 | Monovalent salt concentration (mM) used for Tm calculation |
 | `--gene-ids` | *(all)* | Space-separated list of gene IDs to process; see [Running on a subset of genes](#running-on-a-subset-of-genes) |
+| `--dna-output` | *(none)* | Write a SnapGene `.dna` file of the assembled deletion plasmid (single-gene runs only) |
+| `--gbk-output` | *(none)* | Write an annotated GenBank `.gbk` of the assembled deletion plasmid (single-gene runs only) |
 
 ### Output columns
 

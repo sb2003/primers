@@ -278,8 +278,17 @@ def show_results(
     stderr: str,
     download_filename: str | None = None,
     rename_columns: dict[str, str] | None = None,
+    extra_downloads: list[dict] | None = None,
 ):
-    """Read the output CSV, display it, and offer a download button."""
+    """Read the output CSV, display it, and offer download buttons.
+
+    ``extra_downloads`` is an optional list of dicts describing additional
+    download buttons. Each dict must contain ``label``, ``data``,
+    ``file_name``, ``mime`` and may optionally contain ``help``. When
+    ``extra_downloads`` is non-empty, the CSV download button is suppressed
+    entirely and only the extras are shown (centered in their own row);
+    otherwise the CSV download button is shown on its own.
+    """
     show_stderr(stderr)
 
     p = Path(csv_path)
@@ -306,12 +315,33 @@ def show_results(
             _csv.writer(buf).writerow(new_header)
             raw = buf.getvalue().rstrip("\r\n") + "\n" + rest
 
-    st.download_button(
-        label="Download CSV",
-        data=raw,
-        file_name=download_filename or p.name,
-        mime="text/csv",
-    )
+    _extras = extra_downloads or []
+    if _extras:
+        # Single-gene assembly mode: the .dna (and optionally .gbk) file
+        # carries everything the user needs, so we suppress the CSV download
+        # and only show the extras, centered in their own row. Extras get
+        # wider columns so their long labels ("Download SnapGene file
+        # (.dna)", "Download annotated GenBank (.gbk)") don't wrap.
+        _cols = st.columns(
+            [1] + [3] * len(_extras) + [1], gap="small"
+        )
+        for _col, _btn in zip(_cols[1:-1], _extras):
+            with _col:
+                st.download_button(
+                    label=_btn["label"],
+                    data=_btn["data"],
+                    file_name=_btn["file_name"],
+                    mime=_btn["mime"],
+                    help=_btn.get("help"),
+                    use_container_width=True,
+                )
+    else:
+        st.download_button(
+            label="Download CSV",
+            data=raw,
+            file_name=download_filename or p.name,
+            mime="text/csv",
+        )
 
     try:
         df = pd.read_csv(csv_path)
@@ -550,6 +580,17 @@ with tab_cloning:
             fd, out_path = tempfile.mkstemp(suffix=".csv")
             os.close(fd)
 
+            # Only request the assembled plasmid outputs when exactly one gene
+            # is being designed (they are single-assembly views).
+            _gene_id_list = gene_ids.split()
+            gbk_path: str | None = None
+            dna_path: str | None = None
+            if len(_gene_id_list) == 1 and tail_mode == "plasmid_overlaps" and not linear_plasmid:
+                gbk_fd, gbk_path = tempfile.mkstemp(suffix=".gbk")
+                os.close(gbk_fd)
+                dna_fd, dna_path = tempfile.mkstemp(suffix=".dna")
+                os.close(dna_fd)
+
             args = [
                 "--plasmid", plasmid_path,
                 "--genome", *genome_paths,
@@ -575,6 +616,10 @@ with tab_cloning:
                 "--three-prime-extra", three_prime_extra,
                 "--five-prime-extra", five_prime_extra,
             ]
+            if gbk_path:
+                args.extend(["--gbk-output", gbk_path])
+            if dna_path:
+                args.extend(["--dna-output", dna_path])
             if linear_plasmid:
                 args.append("--linear-plasmid")
             if allow_unmatched:
@@ -596,18 +641,53 @@ with tab_cloning:
                     f"_{_safe_part(five_prime_enzyme)}_{_safe_part(three_prime_enzyme)}"
                     f"_{_date_stamp()}.csv"
                 )
-                _gene_id_list = gene_ids.split()
                 rename_map = None
                 if len(_gene_id_list) == 1:
                     _gid = _gene_id_list[0]
                     rename_map = {
-                        "forward_primer_full_5to3": f"{_gid}_fw",
+                        "forward_primer_full_5to3": f"{_gid}_fwd",
                         "reverse_primer_full_5to3": f"{_gid}_rev",
                     }
+
+                # Collect the assembled-plasmid download buttons (single gene
+                # only) to display next to the CSV download button.
+                _extra_downloads: list[dict] = []
+                if dna_path and Path(dna_path).exists() and Path(dna_path).stat().st_size > 0:
+                    dna_download_name = (
+                        f"{_safe_part(_plasmid_stem(plasmid_name, plasmid_upload))}"
+                        f"_{_safe_part(_gene_id_list[0])}"
+                        f"_{_date_stamp()}.dna"
+                    )
+                    with open(dna_path, "rb") as _df:
+                        _dna_bytes = _df.read()
+                    _extra_downloads.append({
+                        "label": "Download SnapGene file (.dna)",
+                        "data": _dna_bytes,
+                        "file_name": dna_download_name,
+                        "mime": "application/octet-stream",
+                        "help": "Native SnapGene file — primers land in the Primers panel as proper arrows (not feature rectangles).",
+                    })
+                if gbk_path and Path(gbk_path).exists() and Path(gbk_path).stat().st_size > 0:
+                    gbk_download_name = (
+                        f"{_safe_part(_plasmid_stem(plasmid_name, plasmid_upload))}"
+                        f"_{_safe_part(_gene_id_list[0])}"
+                        f"_{_date_stamp()}.gbk"
+                    )
+                    with open(gbk_path, "rb") as _gf:
+                        _gbk_bytes = _gf.read()
+                    _extra_downloads.append({
+                        "label": "Download annotated GenBank (.gbk)",
+                        "data": _gbk_bytes,
+                        "file_name": gbk_download_name,
+                        "mime": "chemical/seq-na-genbank",
+                        "help": "Open in Benchling or any GenBank viewer to see the assembled plasmid.",
+                    })
+
                 show_results(
                     out_path, stderr,
                     download_filename=download_name,
                     rename_columns=rename_map,
+                    extra_downloads=_extra_downloads,
                 )
 
 # ========================== DELETION =======================================
@@ -711,6 +791,18 @@ with tab_deletion:
             fd, out_path = tempfile.mkstemp(suffix=".csv")
             os.close(fd)
 
+            # Only request the assembled deletion plasmid outputs when exactly
+            # one gene is being designed against a circular plasmid (they are
+            # single-assembly views).
+            _gene_id_list = gene_ids.split()
+            dna_path: str | None = None
+            gbk_path: str | None = None
+            if len(_gene_id_list) == 1 and not linear_plasmid:
+                dna_fd, dna_path = tempfile.mkstemp(suffix=".dna")
+                os.close(dna_fd)
+                gbk_fd, gbk_path = tempfile.mkstemp(suffix=".gbk")
+                os.close(gbk_fd)
+
             args = [
                 "--plasmid", plasmid_path,
                 "--genome", *genome_paths,
@@ -727,6 +819,10 @@ with tab_deletion:
                 "--mv-conc", str(mv_conc),
                 "--gc-clamp", str(gc_clamp),
             ]
+            if dna_path:
+                args.extend(["--dna-output", dna_path])
+            if gbk_path:
+                args.extend(["--gbk-output", gbk_path])
             if flank_length.strip():
                 args.extend(["--flank-length", flank_length.strip()])
             if linear_plasmid:
@@ -750,7 +846,6 @@ with tab_deletion:
                     f"_{_safe_part(five_prime_enzyme)}_{_safe_part(three_prime_enzyme)}"
                     f"_{_date_stamp()}.csv"
                 )
-                _gene_id_list = gene_ids.split()
                 rename_map = None
                 if len(_gene_id_list) == 1:
                     _gid = _gene_id_list[0]
@@ -760,10 +855,46 @@ with tab_deletion:
                         "CD_fwd": f"{_gid}_CD_fwd",
                         "CD_rev": f"{_gid}_CD_rev",
                     }
+
+                # Collect the assembled deletion plasmid download buttons
+                # (single gene only) to display next to the CSV download.
+                _extra_downloads: list[dict] = []
+                if dna_path and Path(dna_path).exists() and Path(dna_path).stat().st_size > 0:
+                    dna_download_name = (
+                        f"{_safe_part(_plasmid_stem(plasmid_name, plasmid_upload))}"
+                        f"_delta_{_safe_part(_gene_id_list[0])}"
+                        f"_{_date_stamp()}.dna"
+                    )
+                    with open(dna_path, "rb") as _df:
+                        _dna_bytes = _df.read()
+                    _extra_downloads.append({
+                        "label": "Download SnapGene file (.dna)",
+                        "data": _dna_bytes,
+                        "file_name": dna_download_name,
+                        "mime": "application/octet-stream",
+                        "help": "Native SnapGene file — deletion primers land in the Primers panel as proper arrows (not feature rectangles).",
+                    })
+                if gbk_path and Path(gbk_path).exists() and Path(gbk_path).stat().st_size > 0:
+                    gbk_download_name = (
+                        f"{_safe_part(_plasmid_stem(plasmid_name, plasmid_upload))}"
+                        f"_delta_{_safe_part(_gene_id_list[0])}"
+                        f"_{_date_stamp()}.gbk"
+                    )
+                    with open(gbk_path, "rb") as _gf:
+                        _gbk_bytes = _gf.read()
+                    _extra_downloads.append({
+                        "label": "Download annotated GenBank (.gbk)",
+                        "data": _gbk_bytes,
+                        "file_name": gbk_download_name,
+                        "mime": "chemical/seq-na-genbank",
+                        "help": "Open in Benchling or any GenBank viewer to see the assembled deletion plasmid.",
+                    })
+
                 show_results(
                     out_path, stderr,
                     download_filename=download_name,
                     rename_columns=rename_map,
+                    extra_downloads=_extra_downloads,
                 )
 
 # ========================== PROTEIN TAG ====================================

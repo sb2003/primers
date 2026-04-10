@@ -27,6 +27,14 @@ from typing import List, Optional, Sequence, Tuple
 
 from tqdm import tqdm
 
+from Bio import SeqIO as _SeqIO
+from Bio.Seq import Seq as _Seq
+from Bio.SeqFeature import (
+    FeatureLocation as _FeatureLocation,
+    SeqFeature as _SeqFeature,
+)
+from Bio.SeqRecord import SeqRecord as _SeqRecord
+
 from primer_utils import (
     GenomeMatch,
     calc_tm,
@@ -41,6 +49,12 @@ from primer_utils import (
     load_single_sequence,
     rc,
     select_cut,
+)
+
+from snapgene_dna_writer import (
+    DnaFeature as _DnaFeature,
+    DnaPrimer as _DnaPrimer,
+    write_dna_file as _write_dna_file,
 )
 
 GENE_OVERLAP = 9   # bp kept from each end of the gene to preserve reading frame
@@ -125,6 +139,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gene-ids", nargs="+", default=None,
                    help="Only design primers for these gene IDs (filtered from --genes FASTA). "
                         "Default: all genes.")
+    p.add_argument("--dna-output", default=None,
+                   help="Write a SnapGene .dna of the assembled deletion plasmid, with the "
+                        "four deletion primers landing in SnapGene's Primers panel as "
+                        "proper primer arrows. Only applied when exactly one gene was "
+                        "processed successfully; silently skipped otherwise.")
+    p.add_argument("--gbk-output", default=None,
+                   help="Write an annotated GenBank of the assembled deletion plasmid. "
+                        "Only applied when exactly one gene was processed successfully; "
+                        "silently skipped otherwise.")
     return p.parse_args()
 
 
@@ -133,9 +156,9 @@ def parse_args() -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 
 def build_vector_tails(plasmid_seq: str, three_prime_enzyme, five_prime_enzyme,
-                       args: argparse.Namespace) -> Tuple[str, str]:
+                       args: argparse.Namespace) -> Tuple[str, str, int, int]:
     """
-    Return (three_prime_tail, five_prime_tail) for Primers A and D.
+    Return (three_prime_tail, five_prime_tail, three_prime0, five_prime0).
 
     three_prime_tail = sequence upstream of the 3' enzyme cut → prepended to Primer A (insert 5' end)
     five_prime_tail  = RC of sequence downstream of the 5' enzyme cut → prepended to Primer D (insert 3' end)
@@ -166,7 +189,7 @@ def build_vector_tails(plasmid_seq: str, three_prime_enzyme, five_prime_enzyme,
     three_prime_tail, _ = extract_upstream(plasmid_seq, three_prime0, args.overlap_length, args.circular_plasmid)
     five_prime_raw, _   = extract_downstream(plasmid_seq, five_prime_dn_start, args.overlap_length, args.circular_plasmid)
     five_prime_tail = rc(five_prime_raw)
-    return three_prime_tail, five_prime_tail
+    return three_prime_tail, five_prime_tail, three_prime0, five_prime0
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +329,292 @@ def design_deletion_primers(
 
 
 # ---------------------------------------------------------------------------
+# SnapGene .dna assembly writer
+# ---------------------------------------------------------------------------
+
+def _build_deletion_linearized(
+    plasmid_seq: str,
+    insert_seq: str,
+    three_prime0: int,
+    five_prime0: int,
+    five_prime_enzyme,
+    overlap_length: int,
+):
+    """Build the linearized deletion-assembled plasmid for a single gene.
+
+    The deletion "insert" is ``left_block + right_block`` — i.e. the two
+    amplicons fused at the deletion junction. The arc of the backbone between
+    ``three_prime0`` (exclusive upper bound) and ``five_prime0 - ovhg``
+    (inclusive lower bound) is replaced by this insert.
+
+    The record is oriented so the insert sits at the END of the linearized
+    sequence — the new origin (position 1) is the base immediately after the
+    insert — matching the cloning script's layout.
+
+    Returns (linearized_seq, insert_start0, insert_end0) on success, or a
+    string explaining why the assembly couldn't be built.
+    """
+    n = len(plasmid_seq)
+    if n == 0 or len(insert_seq) == 0:
+        return "empty plasmid or insert sequence"
+
+    plasmid_upper = plasmid_seq.upper()
+    insert_upper = insert_seq.upper()
+
+    # 3'-overhang enzymes (ovhg > 0) shift the downstream-of-cut start back by
+    # `ovhg` so the extracted overlap includes the overhang bases, matching
+    # what build_vector_tails does.
+    five_prime_dn_offset = max(0, int(five_prime_enzyme.ovhg))
+    boundary_left = three_prime0
+    kept_continue = (five_prime0 - five_prime_dn_offset) % n
+
+    # Same slicing logic as _linearize_assembly in design_cloning_primers_2.0.py:
+    # if the replaced arc does not cross the origin, the kept backbone is two
+    # slices that must be glued together with the insert last; otherwise the
+    # kept backbone is already one contiguous slice.
+    if boundary_left < kept_continue:
+        first_segment = plasmid_upper[:boundary_left]
+        last_segment = plasmid_upper[kept_continue:]
+        kept_length = len(first_segment) + len(last_segment)
+        if kept_length < 2 * overlap_length:
+            return "kept arc shorter than twice the overlap length"
+        linearized = last_segment + first_segment + insert_upper
+    else:
+        kept_arc = plasmid_upper[kept_continue:boundary_left]
+        if len(kept_arc) < 2 * overlap_length:
+            return "kept arc shorter than twice the overlap length"
+        linearized = kept_arc + insert_upper
+
+    total_length = len(linearized)
+    insert_length = len(insert_upper)
+    insert_start0 = total_length - insert_length
+    insert_end0 = total_length
+    return linearized, insert_start0, insert_end0
+
+
+def _gbk_safe_locus(gene_id: str, plasmid_id: str) -> str:
+    """Return a LOCUS name that is safe for GenBank output (<=16 chars, alnum+underscore)."""
+    import re as _re
+    combined = f"del_{gene_id}_{plasmid_id}"
+    sanitized = _re.sub(r"[^A-Za-z0-9_]", "_", combined)
+    if not sanitized:
+        sanitized = "assembled"
+    return sanitized[:16]
+
+
+def write_deletion_assembly_gbk(
+    output_path: Path,
+    plasmid_id: str,
+    plasmid_seq: str,
+    gene_id: str,
+    left_block: str,
+    right_block: str,
+    three_prime0: int,
+    five_prime0: int,
+    five_prime_enzyme,
+    overlap_length: int,
+    circular_plasmid: bool,
+) -> Optional[str]:
+    """Write an annotated GenBank of the assembled deletion plasmid for a single gene.
+
+    Same linearized layout as ``write_deletion_assembly_dna`` — the deletion
+    insert (left_block + right_block) sits at the end of the record, so the
+    new origin is the base immediately after the insert. Two misc_feature
+    blocks are annotated (``{gene_id}_AB`` and ``{gene_id}_CD``) so the
+    AB↔CD junction is visible. Primers are NOT annotated — GenBank's
+    primer_bind features don't render as Primers-panel entries in SnapGene,
+    so primers are handled only through the .dna writer.
+
+    Returns None on success, or a string explaining why the file was not written.
+    """
+    if not circular_plasmid:
+        return "deletion .gbk output only supported for circular plasmids"
+
+    insert_seq = left_block + right_block
+    built = _build_deletion_linearized(
+        plasmid_seq, insert_seq, three_prime0, five_prime0,
+        five_prime_enzyme, overlap_length,
+    )
+    if isinstance(built, str):
+        return built
+    linearized, insert_start0, insert_end0 = built
+    total_length = len(linearized)
+    left_len = len(left_block)
+
+    locus_name = _gbk_safe_locus(gene_id, plasmid_id)
+    record = _SeqRecord(
+        _Seq(linearized),
+        id=locus_name,
+        name=locus_name,
+        description=f"{gene_id} deletion into {plasmid_id}",
+        annotations={
+            "molecule_type": "DNA",
+            "topology": "circular",
+            "organism": "synthetic construct",
+            "source": "synthetic construct",
+        },
+    )
+
+    record.features.append(_SeqFeature(
+        _FeatureLocation(0, total_length, strand=+1),
+        type="source",
+        qualifiers={
+            "organism": ["synthetic construct"],
+            "mol_type": ["other DNA"],
+        },
+    ))
+
+    ab_label = f"{gene_id}_AB"
+    cd_label = f"{gene_id}_CD"
+    record.features.append(_SeqFeature(
+        _FeatureLocation(insert_start0, insert_start0 + left_len, strand=+1),
+        type="misc_feature",
+        qualifiers={"label": [ab_label], "note": [ab_label]},
+    ))
+    record.features.append(_SeqFeature(
+        _FeatureLocation(insert_start0 + left_len, insert_end0, strand=+1),
+        type="misc_feature",
+        qualifiers={"label": [cd_label], "note": [cd_label]},
+    ))
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w") as fh:
+        _SeqIO.write([record], fh, "genbank")
+
+    return None
+
+
+def write_deletion_assembly_dna(
+    output_path: Path,
+    plasmid_seq: str,
+    gene_id: str,
+    left_block: str,
+    right_block: str,
+    result: DeletionPrimerResult,
+    three_prime0: int,
+    five_prime0: int,
+    five_prime_enzyme,
+    overlap_length: int,
+    circular_plasmid: bool,
+) -> Optional[str]:
+    """Write a SnapGene .dna of the assembled deletion plasmid for a single gene.
+
+    Emits the four deletion primers (A/B forward+reverse across the left
+    amplicon, C/D forward+reverse across the right amplicon) as entries in
+    SnapGene's Primers panel. The deletion insert (left_block + right_block)
+    is rendered as a gray block feature labelled ``Δ{gene_id}``.
+
+    Only supported for circular plasmids — linear plasmids return a warning
+    and are silently skipped by the caller.
+
+    Returns None on success, or a string explaining why the file was not
+    written.
+    """
+    if not circular_plasmid:
+        return "deletion .dna output only supported for circular plasmids"
+
+    insert_seq = left_block + right_block
+    built = _build_deletion_linearized(
+        plasmid_seq, insert_seq, three_prime0, five_prime0,
+        five_prime_enzyme, overlap_length,
+    )
+    if isinstance(built, str):
+        return built
+    linearized, insert_start0, insert_end0 = built
+
+    left_len = len(left_block)
+
+    # Binding footprints on the top strand. Primer A/C are forward primers so
+    # their binding equals the top strand at the 5' end of their respective
+    # amplicon. Primer B/D are reverse primers, so their binding is the RC of
+    # the top strand at the 3' end of their respective amplicon.
+    a_start0 = insert_start0
+    a_end0 = insert_start0 + len(result.bind_a)
+
+    b_start0 = insert_start0 + left_len - len(result.bind_b)
+    b_end0 = insert_start0 + left_len
+
+    c_start0 = insert_start0 + left_len
+    c_end0 = insert_start0 + left_len + len(result.bind_c)
+
+    d_start0 = insert_end0 - len(result.bind_d)
+    d_end0 = insert_end0
+
+    features = [
+        # Two red blocks — one for each amplicon (left = AB, right = CD) —
+        # so the AB↔CD junction is visible on the map. type="misc_feature"
+        # with no directionality renders as a block rather than an arrow.
+        _DnaFeature(
+            name=f"{gene_id}_AB",
+            start0=insert_start0,
+            end0=insert_start0 + left_len,
+            type="misc_feature",
+            directionality="0",
+            color="#ff0000",
+        ),
+        _DnaFeature(
+            name=f"{gene_id}_CD",
+            start0=insert_start0 + left_len,
+            end0=insert_end0,
+            type="misc_feature",
+            directionality="0",
+            color="#ff0000",
+        ),
+    ]
+    primers = [
+        _DnaPrimer(
+            name=f"{gene_id}_AB_fwd",
+            full_seq=result.full_a,
+            binding=result.bind_a,
+            tail=result.tail_a,
+            bind_start0=a_start0,
+            bind_end0=a_end0,
+            strand=+1,
+            tm=result.tm_a,
+        ),
+        _DnaPrimer(
+            name=f"{gene_id}_AB_rev",
+            full_seq=result.full_b,
+            binding=result.bind_b,
+            tail=result.tail_b,
+            bind_start0=b_start0,
+            bind_end0=b_end0,
+            strand=-1,
+            tm=result.tm_b,
+        ),
+        _DnaPrimer(
+            name=f"{gene_id}_CD_fwd",
+            full_seq=result.full_c,
+            binding=result.bind_c,
+            tail=result.tail_c,
+            bind_start0=c_start0,
+            bind_end0=c_end0,
+            strand=+1,
+            tm=result.tm_c,
+        ),
+        _DnaPrimer(
+            name=f"{gene_id}_CD_rev",
+            full_seq=result.full_d,
+            binding=result.bind_d,
+            tail=result.tail_d,
+            bind_start0=d_start0,
+            bind_end0=d_end0,
+            strand=-1,
+            tm=result.tm_d,
+        ),
+    ]
+
+    _write_dna_file(
+        output_path=output_path,
+        sequence=linearized,
+        circular=True,
+        features=features,
+        primers=primers,
+    )
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Flank length selection
 # ---------------------------------------------------------------------------
 
@@ -333,7 +642,7 @@ def main() -> int:
     plasmid_id, plasmid_seq = load_single_sequence(args.plasmid)
     three_prime_enzyme = get_enzyme(args.three_prime_enzyme)
     five_prime_enzyme  = get_enzyme(args.five_prime_enzyme)
-    vector_three_prime_tail, vector_five_prime_tail = build_vector_tails(
+    vector_three_prime_tail, vector_five_prime_tail, three_prime0, five_prime0 = build_vector_tails(
         plasmid_seq, three_prime_enzyme, five_prime_enzyme, args
     )
 
@@ -350,6 +659,7 @@ def main() -> int:
     written = 0
     skipped = 0
     failed  = 0
+    last_success: Optional[Tuple[str, str, str, DeletionPrimerResult]] = None
 
     with out_path.open("w", newline="") as fh:
         writer = csv.writer(fh)
@@ -439,10 +749,59 @@ def main() -> int:
                     match.strand,
                 ])
                 written += 1
+                last_success = (gene_id, left_block, right_block, result)
 
             except Exception as exc:
                 failed += 1
                 tqdm.write(f"[ERROR] gene {gene_id}: {exc}")
+
+    if args.gbk_output:
+        if written == 1 and last_success is not None:
+            gbk_gene_id, gbk_left_block, gbk_right_block, _ = last_success
+            gbk_warning = write_deletion_assembly_gbk(
+                Path(args.gbk_output),
+                plasmid_id=plasmid_id,
+                plasmid_seq=plasmid_seq,
+                gene_id=gbk_gene_id,
+                left_block=gbk_left_block,
+                right_block=gbk_right_block,
+                three_prime0=three_prime0,
+                five_prime0=five_prime0,
+                five_prime_enzyme=five_prime_enzyme,
+                overlap_length=args.overlap_length,
+                circular_plasmid=args.circular_plasmid,
+            )
+            if gbk_warning:
+                print(f"GenBank output skipped: {gbk_warning}", file=sys.stderr)
+        else:
+            print(
+                f"GenBank output skipped: expected exactly 1 written gene, got {written}",
+                file=sys.stderr,
+            )
+
+    if args.dna_output:
+        if written == 1 and last_success is not None:
+            dna_gene_id, dna_left_block, dna_right_block, dna_result = last_success
+            dna_warning = write_deletion_assembly_dna(
+                Path(args.dna_output),
+                plasmid_seq=plasmid_seq,
+                gene_id=dna_gene_id,
+                left_block=dna_left_block,
+                right_block=dna_right_block,
+                result=dna_result,
+                three_prime0=three_prime0,
+                five_prime0=five_prime0,
+                five_prime_enzyme=five_prime_enzyme,
+                overlap_length=args.overlap_length,
+                circular_plasmid=args.circular_plasmid,
+            )
+            if dna_warning:
+                print(f"SnapGene .dna output skipped: {dna_warning}", file=sys.stderr)
+        else:
+            print(
+                f"SnapGene .dna output skipped: expected exactly 1 written gene, got {written}",
+                file=sys.stderr,
+            )
 
     print(
         f"Done. {len(genes)} genes | written={written} skipped={skipped} failed={failed}",

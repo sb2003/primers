@@ -642,11 +642,11 @@ def design_tag_fusion(
     warnings: List[str] = []
     protein_part = _protein_name_from_tag(tag_name, terminus)
 
-    name_ab_fwd = f"AB-{gene_id}_fw"
+    name_ab_fwd = f"AB-{gene_id}_fwd"
     name_ab_rev = f"AB-{gene_id}_rev"
-    name_lt_fwd = f"linker-{protein_part}_fw"
+    name_lt_fwd = f"linker-{protein_part}_fwd"
     name_lt_rev = f"linker-{protein_part}_rev"
-    name_cd_fwd = f"CD-{gene_id}_fw"
+    name_cd_fwd = f"CD-{gene_id}_fwd"
     name_cd_rev = f"CD-{gene_id}_rev"
 
     matches = find_exact_matches(genome_records, gene_seq)
