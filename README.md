@@ -252,6 +252,7 @@ The tag provides the fusion's start codon at its 5' end and must **not** contain
 - The tag sequence is expected to already include its fusion linker — at the 5' end (before the protein) for C-terminal tags, at the 3' end (after the protein) for N-terminal tags — so the linker is reconstituted from the LT template rather than added via a primer tail.
 - Tails are lowercase; gene/tag-binding regions are uppercase in the output.
 - Tm values are reported for the binding region only.
+- Optionally exports a SnapGene `.dna` file and annotated GenBank `.gbk` of the assembled tag-fusion plasmid.
 - Genes on the minus strand are handled by reverse-complementing the full context, so primer design is always in the gene-reading direction.
 
 ### Validation checks
@@ -338,6 +339,8 @@ python design_protein_tag_primers.py \
 | `--gc-clamp` | 1 | Minimum G/C bases required at the 3' end of each primer |
 | `--mv-conc` | 500.0 | Monovalent salt concentration (mM) used for Tm calculation |
 | `--gene-ids` | required | Gene ID to tag. Must resolve to exactly one gene from the input FASTA. |
+| `--dna-output` | *(none)* | Write a SnapGene `.dna` file of the assembled tag-fusion plasmid |
+| `--gbk-output` | *(none)* | Write an annotated GenBank `.gbk` of the assembled tag-fusion plasmid |
 
 ### Hardcoded tags
 
