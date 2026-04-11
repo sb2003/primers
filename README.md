@@ -422,3 +422,11 @@ Multiple IDs can be passed at once:
 If any requested IDs are not found in the FASTA, a warning is printed for each missing ID and the script continues with the IDs that were matched. If none are matched, the script exits with an error and does not write an output file.
 
 `design_protein_tag_primers.py` also accepts `--gene-ids`, but it is **required** and must resolve to exactly one gene — the script processes a single gene per run.
+
+---
+
+## Acknowledgements
+
+Primer design uses the [primer3](https://primer3.org/) engine via [primer3-py](https://github.com/libnano/primer3-py):
+
+> Untergasser A, Cutcutache I, Koressaar T, Ye J, Faircloth BC, Remm M, Rozen SG. Primer3 — new capabilities and interfaces. *Nucleic Acids Res.* 2012;40(15):e115.
